@@ -5,7 +5,9 @@ import json
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
+from adapters.slack.web_api import SlackAPIError, SlackWebAPIClient
 from agent.llm import LocalFallbackLLMClient
 from agent.models import InboundEvent
 from agent.service import AgentService
@@ -234,6 +236,42 @@ class SQLiteStoreTests(unittest.TestCase):
                 details='{"intent":"remind"}',
             )
             self.assertGreaterEqual(audit_store.count(), 1)
+
+
+class SlackWebAPITests(unittest.TestCase):
+    def test_post_message_success(self) -> None:
+        class FakeResponse:
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+                return False
+
+            def read(self) -> bytes:
+                return b'{"ok": true, "channel": "C1", "ts": "1.23"}'
+
+        with patch("adapters.slack.web_api.request.urlopen", return_value=FakeResponse()) as mocked:
+            client = SlackWebAPIClient(bot_token="xoxb-test")
+            result = client.post_message(channel="C1", text="hello", thread_ts="1.11")
+            self.assertEqual(result["ok"], True)
+            req = mocked.call_args[0][0]
+            self.assertEqual(req.full_url, "https://slack.com/api/chat.postMessage")
+
+    def test_post_message_error(self) -> None:
+        class FakeResponse:
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+                return False
+
+            def read(self) -> bytes:
+                return b'{"ok": false, "error": "channel_not_found"}'
+
+        with patch("adapters.slack.web_api.request.urlopen", return_value=FakeResponse()):
+            client = SlackWebAPIClient(bot_token="xoxb-test")
+            with self.assertRaises(SlackAPIError):
+                client.post_message(channel="C1", text="hello")
 
 
 if __name__ == "__main__":

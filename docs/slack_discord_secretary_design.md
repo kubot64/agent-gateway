@@ -267,6 +267,8 @@ docs/
   - `POST /api/inbound/slack/events`
   - `POST /api/inbound/slack/commands`
   - `POST /api/inbound/slack/interactions`
+- Slack outbound API
+  - `chat.postMessage`（`SLACK_BOT_TOKEN` 設定時、message eventに自動返信）
 - Agent API
   - `POST /api/agent/confirm-action`
   - `GET /api/health`

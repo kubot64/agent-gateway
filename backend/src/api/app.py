@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 
+from adapters.slack.web_api import SlackAPIError, SlackWebAPIClient
 from api import inbound
 from api.slack_payloads import extract_challenge, is_url_verification
 
@@ -15,6 +16,41 @@ app = FastAPI(title="home-secretary-backend", version="0.1.0")
 def _signing_secret() -> str | None:
     secret = os.getenv("SLACK_SIGNING_SECRET", "").strip()
     return secret or None
+
+
+def _bot_token() -> str | None:
+    token = os.getenv("SLACK_BOT_TOKEN", "").strip()
+    return token or None
+
+
+def _extract_reply_target(payload: dict) -> tuple[str, str | None] | None:
+    event = payload.get("event", {})
+    if not isinstance(event, dict):
+        return None
+    if str(event.get("type", "")) != "message":
+        return None
+    if event.get("bot_id") or event.get("subtype") == "bot_message":
+        return None
+    channel = str(event.get("channel", "")).strip()
+    if not channel:
+        return None
+    thread_ts = event.get("thread_ts") or event.get("ts")
+    return channel, str(thread_ts) if thread_ts else None
+
+
+def _try_post_reply(payload: dict, text: str) -> None:
+    token = _bot_token()
+    if not token:
+        return
+    target = _extract_reply_target(payload)
+    if not target:
+        return
+    channel, thread_ts = target
+    try:
+        SlackWebAPIClient(bot_token=token).post_message(channel=channel, text=text, thread_ts=thread_ts)
+    except SlackAPIError:
+        # Keep inbound success path resilient even if Slack outbound fails.
+        return
 
 
 @app.get("/api/health")
@@ -47,8 +83,11 @@ async def inbound_slack_events(request: Request) -> JSONResponse:
         raw_body=raw_body,
         signing_secret=_signing_secret(),
     )
-    status_code = 401 if result.get("status") == "unauthorized" else 200
-    return JSONResponse(result, status_code=status_code)
+    if result.get("status") == "unauthorized":
+        return JSONResponse(result, status_code=401)
+
+    _try_post_reply(payload, str(result.get("text", "")))
+    return JSONResponse({"ok": True, "status": result.get("status"), "metadata": result.get("metadata", {})}, status_code=200)
 
 
 @app.post("/api/inbound/slack/commands")
