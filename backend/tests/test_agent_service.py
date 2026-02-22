@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -21,6 +22,7 @@ from api.security import verify_slack_signature
 from api.slack_payloads import extract_confirmation_from_interaction, normalize_slash_command, parse_interaction_payload
 from api.slack_responses import build_slack_response
 from infra.stores import SQLiteAuditLogStore, SQLiteCommandMetricStore, SQLiteDatabase, SQLiteReminderStore
+from infra.factory import build_infra
 
 
 def build_event(text: str) -> InboundEvent:
@@ -399,6 +401,45 @@ class SearchClientTests(unittest.TestCase):
                 self.assertEqual(results[0].path, "docs/a.md")
             finally:
                 root.cleanup()
+
+
+class InfraFactoryTests(unittest.TestCase):
+    def test_build_infra_defaults_to_sqlite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = f"{tmp_dir}/agent.db"
+            with _temporary_env({"DATABASE_BACKEND": None, "IDEMPOTENCY_BACKEND": None}):
+                infra = build_infra(default_sqlite_path=db_path)
+            self.assertIsInstance(infra.database, SQLiteDatabase)
+            self.assertTrue(infra.database.health_check())
+
+    def test_build_infra_redis_requires_url(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = f"{tmp_dir}/agent.db"
+            with _temporary_env({"DATABASE_BACKEND": "sqlite", "IDEMPOTENCY_BACKEND": "redis", "REDIS_URL": None}):
+                with self.assertRaises(ValueError):
+                    build_infra(default_sqlite_path=db_path)
+
+
+class _temporary_env:
+    def __init__(self, updates: dict[str, str | None]) -> None:
+        self.updates = updates
+        self.originals: dict[str, str | None] = {}
+
+    def __enter__(self) -> None:
+        for key, value in self.updates.items():
+            self.originals[key] = os.environ.get(key)
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+        for key, original in self.originals.items():
+            if original is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = original
+        return False
 
 
 class SlackWebAPITests(unittest.TestCase):

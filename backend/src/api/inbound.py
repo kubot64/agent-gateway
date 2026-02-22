@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any, Mapping
 from datetime import datetime, timezone
 
 from agent.models import InboundEvent
-from agent.service import AgentService
 from api.discord_payloads import is_discord_ping, normalize_discord_interaction
 from api.discord_security import DiscordSignatureVerificationError, verify_discord_signature
 from api.security import SignatureVerificationError, verify_slack_signature
@@ -16,29 +14,13 @@ from api.slack_payloads import (
     parse_interaction_payload,
 )
 from api.slack_responses import build_slack_response
-from infra.stores import SQLiteAuditLogStore, SQLiteCommandMetricStore, SQLiteDatabase, SQLiteIdempotencyStore, SQLiteReminderStore
+from infra.factory import build_infra, default_sqlite_path_from_file
 
 
-def _default_database_path() -> str:
-    backend_dir = Path(__file__).resolve().parents[2]
-    return str(backend_dir / "data" / "agent.db")
-
-
-def _build_database() -> SQLiteDatabase:
-    return SQLiteDatabase(db_path=_default_database_path())
-
-
-def _build_service(database: SQLiteDatabase) -> AgentService:
-    return AgentService(
-        reminder_store=SQLiteReminderStore(database),
-        audit_store=SQLiteAuditLogStore(database),
-        metric_store=SQLiteCommandMetricStore(database),
-    )
-
-
-database = _build_database()
-service = _build_service(database)
-idempotency_store = SQLiteIdempotencyStore(database)
+_infra = build_infra(default_sqlite_path=default_sqlite_path_from_file(__file__))
+database = _infra.database
+service = _infra.service
+idempotency_store = _infra.idempotency_store
 
 
 def handle_slack_event(
