@@ -267,11 +267,13 @@ docs/
   - `POST /api/inbound/slack/events`
   - `POST /api/inbound/slack/commands`
   - `POST /api/inbound/slack/interactions`
+  - 重複イベント排除（`event_id` / message key）
 - Slack outbound API
   - `chat.postMessage`（`SLACK_BOT_TOKEN` 設定時、message eventに自動返信）
 - Discord inbound API
   - `POST /api/inbound/discord/interactions`（ping / command）
   - Ed25519 署名検証（`X-Signature-Ed25519` / `X-Signature-Timestamp`）
+  - 重複イベント排除（interaction id）
 - Agent API
   - `POST /api/agent/confirm-action`
   - `GET /api/health`

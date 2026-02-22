@@ -52,6 +52,14 @@ class SQLiteDatabase:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS inbound_events (
+                    idempotency_key TEXT PRIMARY KEY,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
 
 
 class SQLiteReminderStore:
@@ -140,3 +148,26 @@ class SQLiteAuditLogStore:
         with self.database.connect() as conn:
             row = conn.execute("SELECT COUNT(*) FROM audit_logs").fetchone()
         return int(row[0] if row else 0)
+
+
+class SQLiteIdempotencyStore:
+    def __init__(self, database: SQLiteDatabase) -> None:
+        self.database = database
+
+    def mark_processed(self, idempotency_key: str) -> bool:
+        try:
+            with self.database.connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO inbound_events (
+                        idempotency_key, created_at
+                    ) VALUES (?, ?)
+                    """,
+                    (
+                        idempotency_key,
+                        datetime.now(timezone.utc).isoformat(),
+                    ),
+                )
+            return True
+        except sqlite3.IntegrityError:
+            return False

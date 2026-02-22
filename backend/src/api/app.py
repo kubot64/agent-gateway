@@ -91,7 +91,8 @@ async def inbound_slack_events(request: Request) -> JSONResponse:
     if result.get("status") == "unauthorized":
         return JSONResponse(result, status_code=401)
 
-    _try_post_reply(payload, str(result.get("text", "")))
+    if result.get("status") != "duplicate":
+        _try_post_reply(payload, str(result.get("text", "")))
     return JSONResponse({"ok": True, "status": result.get("status"), "metadata": result.get("metadata", {})}, status_code=200)
 
 

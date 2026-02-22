@@ -121,6 +121,22 @@ class SecurityTests(unittest.TestCase):
                 headers={},
             )
 
+    def test_handle_slack_event_duplicate_is_skipped(self) -> None:
+        payload = {
+            "event_id": "evt-dup-1",
+            "team_id": "T1",
+            "event": {
+                "ts": "1700000000",
+                "channel": "C1",
+                "user": "U1",
+                "text": "/ask hello",
+            },
+        }
+        first = handle_slack_event(payload)
+        second = handle_slack_event(payload)
+        self.assertEqual(first["status"], "completed")
+        self.assertEqual(second["status"], "duplicate")
+
 
 class SlackPayloadTests(unittest.TestCase):
     def test_normalize_slash_command(self) -> None:
@@ -361,6 +377,23 @@ class DiscordInboundTests(unittest.TestCase):
                 public_key="a" * 64,
             )
         self.assertEqual(response["status"], "unauthorized")
+
+    def test_handle_discord_duplicate_is_skipped(self) -> None:
+        payload = {
+            "type": 2,
+            "id": "discord-dup-1",
+            "guild_id": "G1",
+            "channel_id": "D1",
+            "member": {"user": {"id": "U1"}},
+            "data": {
+                "name": "ask",
+                "options": [{"name": "question", "value": "hello"}],
+            },
+        }
+        first = handle_discord_interaction(payload)
+        second = handle_discord_interaction(payload)
+        self.assertEqual(first["status"], "completed")
+        self.assertEqual(second["status"], "duplicate")
 
 
 if __name__ == "__main__":

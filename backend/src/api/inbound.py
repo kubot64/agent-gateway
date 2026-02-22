@@ -16,7 +16,7 @@ from api.slack_payloads import (
     parse_interaction_payload,
 )
 from api.slack_responses import build_slack_response
-from infra.stores import SQLiteAuditLogStore, SQLiteDatabase, SQLiteReminderStore
+from infra.stores import SQLiteAuditLogStore, SQLiteDatabase, SQLiteIdempotencyStore, SQLiteReminderStore
 
 
 def _default_database_path() -> str:
@@ -24,15 +24,20 @@ def _default_database_path() -> str:
     return str(backend_dir / "data" / "agent.db")
 
 
-def _build_service() -> AgentService:
-    database = SQLiteDatabase(db_path=_default_database_path())
+def _build_database() -> SQLiteDatabase:
+    return SQLiteDatabase(db_path=_default_database_path())
+
+
+def _build_service(database: SQLiteDatabase) -> AgentService:
     return AgentService(
         reminder_store=SQLiteReminderStore(database),
         audit_store=SQLiteAuditLogStore(database),
     )
 
 
-service = _build_service()
+database = _build_database()
+service = _build_service(database)
+idempotency_store = SQLiteIdempotencyStore(database)
 
 
 def handle_slack_event(
@@ -53,6 +58,13 @@ def handle_slack_event(
             return {"status": "unauthorized", "text": "署名検証に失敗しました。", "metadata": {}}
 
     event = _normalize_slack_event(payload)
+    idempotency_key = _build_slack_idempotency_key(payload, event)
+    if not idempotency_store.mark_processed(idempotency_key):
+        return {
+            "status": "duplicate",
+            "text": "重複イベントのためスキップしました。",
+            "metadata": {"idempotency_key": idempotency_key},
+        }
     response = service.handle_message(event)
     return {
         "status": response.status,
@@ -141,6 +153,15 @@ def handle_discord_interaction(
     if is_discord_ping(payload):
         return {"type": 1}
 
+    idempotency_key = _build_discord_idempotency_key(payload)
+    if not idempotency_store.mark_processed(idempotency_key):
+        return {
+            "type": 4,
+            "data": {"content": "重複イベントのためスキップしました。"},
+            "status": "duplicate",
+            "metadata": {"idempotency_key": idempotency_key},
+        }
+
     normalized_payload = normalize_discord_interaction(payload)
     agent_response = handle_slack_event(normalized_payload)
     content = str(agent_response.get("text", ""))
@@ -168,3 +189,17 @@ def _normalize_slack_event(payload: dict) -> InboundEvent:
         text=str(event.get("text", "")),
         ts=event_dt,
     )
+
+
+def _build_slack_idempotency_key(payload: Mapping[str, Any], event: InboundEvent) -> str:
+    event_id = str(payload.get("event_id", "")).strip()
+    if event_id:
+        return f"slack:event:{event_id}"
+    return f"slack:msg:{event.workspace_id}:{event.channel_id}:{event.message_id}"
+
+
+def _build_discord_idempotency_key(payload: Mapping[str, Any]) -> str:
+    interaction_id = str(payload.get("id", "")).strip()
+    if interaction_id:
+        return f"discord:interaction:{interaction_id}"
+    return "discord:interaction:unknown"
