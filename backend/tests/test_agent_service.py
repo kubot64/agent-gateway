@@ -304,6 +304,19 @@ class SlackPayloadTests(unittest.TestCase):
         self.assertEqual(response["response_type"], "ephemeral")
         self.assertFalse("blocks" in response)
 
+    def test_handle_slash_command_with_alias(self) -> None:
+        response = handle_slack_command(
+            {
+                "team_id": "T1",
+                "channel_id": "C1",
+                "user_id": "U1",
+                "command": "/homeask",
+                "text": "今日の予定は？",
+            }
+        )
+        self.assertEqual(response["status"], "completed")
+        self.assertEqual(response["response_type"], "ephemeral")
+
     def test_parse_interaction_payload(self) -> None:
         parsed = parse_interaction_payload(
             {

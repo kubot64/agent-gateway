@@ -16,6 +16,7 @@ def extract_challenge(payload: Mapping[str, object]) -> str:
 
 def normalize_slash_command(form_payload: Mapping[str, str]) -> dict:
     command = str(form_payload.get("command", "")).strip()
+    command = _normalize_command_alias(command)
     text = str(form_payload.get("text", "")).strip()
     command_text = f"{command} {text}".strip()
     event_ts = str(datetime.now(timezone.utc).timestamp())
@@ -30,6 +31,17 @@ def normalize_slash_command(form_payload: Mapping[str, str]) -> dict:
             "text": command_text,
         },
     }
+
+
+def _normalize_command_alias(command: str) -> str:
+    aliases = {
+        "/homeask": "/ask",
+        "/homesummarize": "/summarize",
+        "/homeremind": "/remind",
+        "/hometask": "/task",
+        "/homemode": "/mode",
+    }
+    return aliases.get(command.lower(), command)
 
 
 def parse_interaction_payload(form_payload: Mapping[str, str]) -> dict:

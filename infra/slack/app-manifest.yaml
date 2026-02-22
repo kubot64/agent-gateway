@@ -8,29 +8,29 @@ features:
     display_name: home-secretary
     always_online: false
   slash_commands:
-    - command: /ask
+    - command: /homeask
       description: Ask assistant
-      usage_hint: /ask 質問
+      usage_hint: /homeask 質問
       should_escape: false
       url: https://REPLACE_WITH_CLOUD_RUN_URL/api/inbound/slack/commands
-    - command: /summarize
+    - command: /homesummarize
       description: Summarize thread
-      usage_hint: /summarize current_thread
+      usage_hint: /homesummarize current_thread
       should_escape: false
       url: https://REPLACE_WITH_CLOUD_RUN_URL/api/inbound/slack/commands
-    - command: /remind
+    - command: /homeremind
       description: Create reminder
-      usage_hint: /remind 2026-03-01T09:00 資料提出
+      usage_hint: /homeremind 2026-03-01T09:00 資料提出
       should_escape: false
       url: https://REPLACE_WITH_CLOUD_RUN_URL/api/inbound/slack/commands
-    - command: /task
+    - command: /hometask
       description: Create task
-      usage_hint: /task add APIの不具合を調査
+      usage_hint: /hometask add APIの不具合を調査
       should_escape: false
       url: https://REPLACE_WITH_CLOUD_RUN_URL/api/inbound/slack/commands
-    - command: /mode
+    - command: /homemode
       description: Set response mode
-      usage_hint: /mode brief
+      usage_hint: /homemode brief
       should_escape: false
       url: https://REPLACE_WITH_CLOUD_RUN_URL/api/inbound/slack/commands
 

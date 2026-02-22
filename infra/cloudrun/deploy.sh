@@ -17,6 +17,7 @@ set -euo pipefail
 #   CPU (default: 1)
 #   MEMORY (default: 512Mi)
 #   ALLOW_UNAUTHENTICATED (default: true)
+#   CLOUDSQL_CONNECTION_NAME (optional: PROJECT:REGION:INSTANCE)
 #
 # Required Secret Manager secrets (latest version is used):
 #   postgres-dsn
@@ -53,6 +54,7 @@ MAX_INSTANCES="${MAX_INSTANCES:-3}"
 CPU="${CPU:-1}"
 MEMORY="${MEMORY:-512Mi}"
 ALLOW_UNAUTHENTICATED="${ALLOW_UNAUTHENTICATED:-true}"
+CLOUDSQL_CONNECTION_NAME="${CLOUDSQL_CONNECTION_NAME:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -78,7 +80,9 @@ if ! gcloud artifacts repositories describe "${AR_REPO}" --location "${GCP_REGIO
 fi
 
 echo "[4/6] build and push image"
-gcloud builds submit "${REPO_ROOT}" --tag "${IMAGE_URI}"
+gcloud builds submit "${REPO_ROOT}" \
+  --config "${SCRIPT_DIR}/cloudbuild.yaml" \
+  --substitutions "_IMAGE_URI=${IMAGE_URI}"
 
 echo "[5/6] deploy cloud run service"
 set_secrets="POSTGRES_DSN=postgres-dsn:latest,SLACK_SIGNING_SECRET=slack-signing-secret:latest,SLACK_BOT_TOKEN=slack-bot-token:latest,DISCORD_PUBLIC_KEY=discord-public-key:latest"
@@ -89,6 +93,11 @@ fi
 unauth_flag="--allow-unauthenticated"
 if [[ "${ALLOW_UNAUTHENTICATED}" != "true" ]]; then
   unauth_flag="--no-allow-unauthenticated"
+fi
+
+cloudsql_args=()
+if [[ -n "${CLOUDSQL_CONNECTION_NAME}" ]]; then
+  cloudsql_args+=(--add-cloudsql-instances "${CLOUDSQL_CONNECTION_NAME}")
 fi
 
 gcloud run deploy "${SERVICE_NAME}" \
@@ -102,7 +111,8 @@ gcloud run deploy "${SERVICE_NAME}" \
   --max-instances "${MAX_INSTANCES}" \
   --set-env-vars "DATABASE_BACKEND=${DATABASE_BACKEND},IDEMPOTENCY_BACKEND=${IDEMPOTENCY_BACKEND},DOC_SEARCH_BACKEND=${DOC_SEARCH_BACKEND}" \
   --set-secrets "${set_secrets}" \
-  ${unauth_flag}
+  ${unauth_flag} \
+  "${cloudsql_args[@]}"
 
 echo "[6/6] resolve service URL"
 SERVICE_URL="$(gcloud run services describe "${SERVICE_NAME}" --region "${GCP_REGION}" --format='value(status.url)')"
