@@ -269,6 +269,8 @@ docs/
   - `POST /api/inbound/slack/interactions`
 - Slack outbound API
   - `chat.postMessage`（`SLACK_BOT_TOKEN` 設定時、message eventに自動返信）
+- Discord inbound API
+  - `POST /api/inbound/discord/interactions`（ping / command）
 - Agent API
   - `POST /api/agent/confirm-action`
   - `GET /api/health`
@@ -282,7 +284,7 @@ docs/
   - `value=confirmation_id`
 
 ### 未実装
-- Discord inbound
+- Discord署名検証（Ed25519）
 - `task add` 実行（Notion/Linear連携）
 - RAG検索
 - 本番向け可観測性（トレース/メトリクス外部連携）

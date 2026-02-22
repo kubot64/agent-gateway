@@ -11,7 +11,8 @@ from adapters.slack.web_api import SlackAPIError, SlackWebAPIClient
 from agent.llm import LocalFallbackLLMClient
 from agent.models import InboundEvent
 from agent.service import AgentService
-from api.inbound import handle_slack_command, handle_slack_event, handle_slack_interaction
+from api.discord_payloads import normalize_discord_interaction
+from api.inbound import handle_discord_interaction, handle_slack_command, handle_slack_event, handle_slack_interaction
 from api.security import verify_slack_signature
 from api.slack_payloads import extract_confirmation_from_interaction, normalize_slash_command, parse_interaction_payload
 from api.slack_responses import build_slack_response
@@ -272,6 +273,49 @@ class SlackWebAPITests(unittest.TestCase):
             client = SlackWebAPIClient(bot_token="xoxb-test")
             with self.assertRaises(SlackAPIError):
                 client.post_message(channel="C1", text="hello")
+
+
+class DiscordInboundTests(unittest.TestCase):
+    def test_normalize_discord_interaction_ask(self) -> None:
+        payload = normalize_discord_interaction(
+            {
+                "id": "i1",
+                "guild_id": "G1",
+                "channel_id": "D1",
+                "member": {"user": {"id": "U1"}},
+                "data": {
+                    "name": "ask",
+                    "options": [{"name": "question", "value": "今日の予定は？"}],
+                },
+            }
+        )
+        self.assertEqual(payload["team_id"], "G1")
+        self.assertEqual(payload["event"]["channel"], "D1")
+        self.assertEqual(payload["event"]["text"], "/ask 今日の予定は？")
+
+    def test_handle_discord_ping(self) -> None:
+        response = handle_discord_interaction({"type": 1})
+        self.assertEqual(response["type"], 1)
+
+    def test_handle_discord_interaction_remind(self) -> None:
+        response = handle_discord_interaction(
+            {
+                "type": 2,
+                "id": "i2",
+                "guild_id": "G1",
+                "channel_id": "D1",
+                "member": {"user": {"id": "U1"}},
+                "data": {
+                    "name": "remind",
+                    "options": [
+                        {"name": "datetime", "value": "2026-03-01T09:00"},
+                        {"name": "message", "value": "資料提出"},
+                    ],
+                },
+            }
+        )
+        self.assertEqual(response["type"], 4)
+        self.assertEqual(response["status"], "completed")
 
 
 if __name__ == "__main__":

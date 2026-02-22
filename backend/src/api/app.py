@@ -120,6 +120,13 @@ async def inbound_slack_interactions(request: Request) -> JSONResponse:
     return JSONResponse(result, status_code=status_code)
 
 
+@app.post("/api/inbound/discord/interactions")
+async def inbound_discord_interactions(request: Request) -> JSONResponse:
+    payload = await request.json()
+    result = inbound.handle_discord_interaction(payload)
+    return JSONResponse(result)
+
+
 @app.post("/api/agent/confirm-action")
 async def confirm_action(request: Request) -> JSONResponse:
     payload = await request.json()

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Mapping
+from typing import Any, Mapping
 from datetime import datetime, timezone
 
 from agent.models import InboundEvent
 from agent.service import AgentService
+from api.discord_payloads import is_discord_ping, normalize_discord_interaction
 from api.security import SignatureVerificationError, verify_slack_signature
 from api.slack_payloads import (
     extract_confirmation_from_interaction,
@@ -116,6 +117,23 @@ def handle_slack_interaction(
         )
     agent_response = handle_confirmation(confirmation)
     return build_slack_response(agent_response)
+
+
+def handle_discord_interaction(payload: Mapping[str, Any]) -> dict:
+    if is_discord_ping(payload):
+        return {"type": 1}
+
+    normalized_payload = normalize_discord_interaction(payload)
+    agent_response = handle_slack_event(normalized_payload)
+    content = str(agent_response.get("text", ""))
+    return {
+        "type": 4,
+        "data": {
+            "content": content,
+        },
+        "status": agent_response.get("status", "unknown"),
+        "metadata": agent_response.get("metadata", {}),
+    }
 
 
 def _normalize_slack_event(payload: dict) -> InboundEvent:
