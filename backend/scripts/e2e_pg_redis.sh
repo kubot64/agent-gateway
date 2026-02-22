@@ -23,6 +23,7 @@ docker compose -f "${INFRA_DIR}/docker-compose.yml" up -d
 echo "[2/6] checking python dependencies"
 python3 - <<'PY'
 import importlib
+import importlib.util
 mods = ["fastapi", "uvicorn", "psycopg", "redis"]
 missing = [m for m in mods if importlib.util.find_spec(m) is None]
 if missing:

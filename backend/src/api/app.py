@@ -5,7 +5,7 @@ from uuid import uuid4
 from typing import Any
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse
 
 from adapters.slack.web_api import SlackAPIError, SlackWebAPIClient
 from api import inbound
@@ -132,7 +132,7 @@ async def inbound_slack_events(request: Request) -> JSONResponse:
 
 
 @app.post("/api/inbound/slack/commands")
-async def inbound_slack_commands(request: Request) -> JSONResponse | PlainTextResponse:
+async def inbound_slack_commands(request: Request) -> JSONResponse:
     request_id = str(getattr(request.state, "request_id", ""))
     raw_body = await request.body()
     form = await request.form()
