@@ -1,0 +1,15 @@
+[project]
+name = "home-secretary-backend"
+version = "0.1.0"
+description = "MVP backend for Slack/Discord secretary agent"
+requires-python = ">=3.9"
+dependencies = [
+  "fastapi>=0.110.0",
+  "uvicorn>=0.27.0",
+  "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+]

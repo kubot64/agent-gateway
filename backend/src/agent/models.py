@@ -13,7 +13,7 @@ class Intent(str, Enum):
     UNKNOWN = "unknown"
 
 
-@dataclass(slots=True)
+@dataclass
 class InboundEvent:
     platform: str
     workspace_id: str
@@ -25,14 +25,14 @@ class InboundEvent:
     ts: datetime
 
 
-@dataclass(slots=True)
+@dataclass
 class Command:
     intent: Intent
     payload: dict[str, Any] = field(default_factory=dict)
     requires_confirmation: bool = False
 
 
-@dataclass(slots=True)
+@dataclass
 class Reminder:
     reminder_id: str
     platform: str
@@ -43,8 +43,16 @@ class Reminder:
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
-@dataclass(slots=True)
+@dataclass
 class AgentResponse:
     text: str
     status: str
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class PendingConfirmation:
+    confirmation_id: str
+    command: Command
+    created_at: datetime
+    expires_at: datetime
