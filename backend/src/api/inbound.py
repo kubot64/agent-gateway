@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from agent.models import InboundEvent
 from agent.service import AgentService
 from api.discord_payloads import is_discord_ping, normalize_discord_interaction
+from api.discord_security import DiscordSignatureVerificationError, verify_discord_signature
 from api.security import SignatureVerificationError, verify_slack_signature
 from api.slack_payloads import (
     extract_confirmation_from_interaction,
@@ -119,7 +120,24 @@ def handle_slack_interaction(
     return build_slack_response(agent_response)
 
 
-def handle_discord_interaction(payload: Mapping[str, Any]) -> dict:
+def handle_discord_interaction(
+    payload: Mapping[str, Any],
+    *,
+    headers: Mapping[str, str] | None = None,
+    raw_body: bytes | None = None,
+    public_key: str | None = None,
+) -> dict:
+    if public_key:
+        body = raw_body if raw_body is not None else json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        try:
+            verify_discord_signature(
+                public_key=public_key,
+                raw_body=body,
+                headers=headers or {},
+            )
+        except DiscordSignatureVerificationError:
+            return {"status": "unauthorized", "text": "署名検証に失敗しました。", "metadata": {}}
+
     if is_discord_ping(payload):
         return {"type": 1}
 

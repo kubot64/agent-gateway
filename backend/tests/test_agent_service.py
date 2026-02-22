@@ -12,6 +12,7 @@ from agent.llm import LocalFallbackLLMClient
 from agent.models import InboundEvent
 from agent.service import AgentService
 from api.discord_payloads import normalize_discord_interaction
+from api.discord_security import DiscordSignatureVerificationError, verify_discord_signature
 from api.inbound import handle_discord_interaction, handle_slack_command, handle_slack_event, handle_slack_interaction
 from api.security import verify_slack_signature
 from api.slack_payloads import extract_confirmation_from_interaction, normalize_slash_command, parse_interaction_payload
@@ -90,6 +91,35 @@ class SecurityTests(unittest.TestCase):
             signing_secret="secret",
         )
         self.assertEqual(response["status"], "unauthorized")
+
+    def test_verify_discord_signature_accepts_valid_with_custom_verifier(self) -> None:
+        called: dict[str, object] = {}
+
+        def verifier(public_key: str, message: bytes, signature: bytes) -> None:
+            called["public_key"] = public_key
+            called["message"] = message
+            called["signature"] = signature
+
+        verify_discord_signature(
+            public_key="a" * 64,
+            raw_body=b'{"type":1}',
+            headers={
+                "X-Signature-Ed25519": "ab" * 64,
+                "X-Signature-Timestamp": "1700000000",
+            },
+            verifier=verifier,
+        )
+        self.assertEqual(called["public_key"], "a" * 64)
+        self.assertEqual(called["message"], b"1700000000" + b'{"type":1}')
+        self.assertEqual(called["signature"], bytes.fromhex("ab" * 64))
+
+    def test_verify_discord_signature_missing_headers(self) -> None:
+        with self.assertRaises(DiscordSignatureVerificationError):
+            verify_discord_signature(
+                public_key="a" * 64,
+                raw_body=b"{}",
+                headers={},
+            )
 
 
 class SlackPayloadTests(unittest.TestCase):
@@ -316,6 +346,21 @@ class DiscordInboundTests(unittest.TestCase):
         )
         self.assertEqual(response["type"], 4)
         self.assertEqual(response["status"], "completed")
+
+    def test_handle_discord_interaction_rejects_invalid_signature(self) -> None:
+        with patch("api.inbound.verify_discord_signature", side_effect=DiscordSignatureVerificationError("bad")):
+            response = handle_discord_interaction(
+                {
+                    "type": 1,
+                },
+                headers={
+                    "X-Signature-Ed25519": "00",
+                    "X-Signature-Timestamp": "1700000000",
+                },
+                raw_body=b'{"type":1}',
+                public_key="a" * 64,
+            )
+        self.assertEqual(response["status"], "unauthorized")
 
 
 if __name__ == "__main__":

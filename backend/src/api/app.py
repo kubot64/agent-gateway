@@ -23,6 +23,11 @@ def _bot_token() -> str | None:
     return token or None
 
 
+def _discord_public_key() -> str | None:
+    key = os.getenv("DISCORD_PUBLIC_KEY", "").strip()
+    return key or None
+
+
 def _extract_reply_target(payload: dict) -> tuple[str, str | None] | None:
     event = payload.get("event", {})
     if not isinstance(event, dict):
@@ -122,8 +127,16 @@ async def inbound_slack_interactions(request: Request) -> JSONResponse:
 
 @app.post("/api/inbound/discord/interactions")
 async def inbound_discord_interactions(request: Request) -> JSONResponse:
+    raw_body = await request.body()
     payload = await request.json()
-    result = inbound.handle_discord_interaction(payload)
+    result = inbound.handle_discord_interaction(
+        payload,
+        headers=request.headers,
+        raw_body=raw_body,
+        public_key=_discord_public_key(),
+    )
+    if result.get("status") == "unauthorized":
+        return JSONResponse(result, status_code=401)
     return JSONResponse(result)
 
 
