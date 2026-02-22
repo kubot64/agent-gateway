@@ -51,6 +51,14 @@ class ConversationStore(Protocol):
         ...
 
 
+class UserPreferenceStore(Protocol):
+    def get_mode(self, *, platform: str, workspace_id: str, user_id: str) -> str:
+        ...
+
+    def set_mode(self, *, platform: str, workspace_id: str, user_id: str, mode: str) -> None:
+        ...
+
+
 class InMemoryReminderStore:
     """In-memory store for kickoff implementation."""
 
@@ -172,6 +180,17 @@ class InMemoryConversationStore:
         return filtered[-limit:]
 
 
+class InMemoryUserPreferenceStore:
+    def __init__(self) -> None:
+        self._modes: dict[tuple[str, str, str], str] = {}
+
+    def get_mode(self, *, platform: str, workspace_id: str, user_id: str) -> str:
+        return self._modes.get((platform, workspace_id, user_id), "brief")
+
+    def set_mode(self, *, platform: str, workspace_id: str, user_id: str, mode: str) -> None:
+        self._modes[(platform, workspace_id, user_id)] = mode
+
+
 class AgentService:
     def __init__(
         self,
@@ -180,6 +199,7 @@ class AgentService:
         audit_store: AuditLogStore | None = None,
         metric_store: MetricStore | None = None,
         conversation_store: ConversationStore | None = None,
+        preference_store: UserPreferenceStore | None = None,
         llm_client: LLMClient | None = None,
         search_client: DocsSearchClient | None = None,
         task_client: TaskClient | None = None,
@@ -191,6 +211,7 @@ class AgentService:
         self.audit_store = audit_store or InMemoryAuditLogStore()
         self.metric_store = metric_store or InMemoryMetricStore()
         self.conversation_store = conversation_store or InMemoryConversationStore()
+        self.preference_store = preference_store or InMemoryUserPreferenceStore()
         self.llm_client = llm_client or build_default_llm_client()
         self.search_client = search_client or build_default_search_client()
         self.task_client = task_client or build_default_task_client()
@@ -208,6 +229,7 @@ class AgentService:
             context_results = self.search_client.search(str(question), limit=3)
             llm_input = _build_ask_prompt(str(question), context_results)
             answer = self.llm_client.answer(llm_input)
+            answer = self._apply_mode(event=event, text=answer)
             metadata: dict[str, object] = {}
             if context_results:
                 metadata["sources"] = [r.path for r in context_results]
@@ -234,8 +256,14 @@ class AgentService:
             self._record_metric(event=event, command=command, response=response, duration_ms=_duration_ms(start))
             return response
 
+        if command.intent is Intent.MODE:
+            response = self._handle_mode(event, command)
+            self._log(action="handle_message", event=event, command=command, response=response, request_id=request_id)
+            self._record_metric(event=event, command=command, response=response, duration_ms=_duration_ms(start))
+            return response
+
         response = AgentResponse(
-            text="コマンドを解釈できませんでした。`/ask` `/summarize` `/remind` `/task` を使用してください。",
+            text="コマンドを解釈できませんでした。`/ask` `/summarize` `/remind` `/task` `/mode` を使用してください。",
             status="unsupported",
         )
         self._log(action="handle_message", event=event, command=command, response=response, request_id=request_id)
@@ -434,10 +462,34 @@ class AgentService:
         for idx, message in enumerate(messages, start=1):
             prompt_lines.append(f"{idx}. {message.user_id}: {message.text}")
         summary = self.llm_client.answer("\n".join(prompt_lines))
+        summary = self._apply_mode(event=event, text=summary)
         return AgentResponse(
             text=summary,
             status="completed",
             metadata={"message_count": len(messages)},
+        )
+
+    def _handle_mode(self, event: InboundEvent, command: Command) -> AgentResponse:
+        mode = str(command.payload.get("mode", "")).lower()
+        if mode not in {"brief", "detailed"}:
+            return AgentResponse(
+                text="形式が不正です。例: /mode brief",
+                status="validation_error",
+                metadata={
+                    "error_type": "validation_error",
+                    "error_message": "invalid mode",
+                },
+            )
+        self.preference_store.set_mode(
+            platform=event.platform,
+            workspace_id=event.workspace_id,
+            user_id=event.user_id,
+            mode=mode,
+        )
+        return AgentResponse(
+            text=f"応答モードを {mode} に設定しました。",
+            status="completed",
+            metadata={"mode": mode},
         )
 
     def _log(
@@ -482,7 +534,7 @@ class AgentService:
         )
 
     def _store_conversation(self, event: InboundEvent, command: Command) -> None:
-        if command.intent is Intent.SUMMARIZE:
+        if command.intent in {Intent.SUMMARIZE, Intent.MODE}:
             return
         if not event.text.strip():
             return
@@ -498,6 +550,19 @@ class AgentService:
                 ts=event.ts,
             )
         )
+
+    def _apply_mode(self, *, event: InboundEvent, text: str) -> str:
+        mode = self.preference_store.get_mode(
+            platform=event.platform,
+            workspace_id=event.workspace_id,
+            user_id=event.user_id,
+        )
+        if mode == "detailed":
+            return text
+        limit = 140
+        if len(text) <= limit:
+            return text
+        return text[:limit].rstrip() + "..."
 
 
 def _duration_ms(start: float) -> int:

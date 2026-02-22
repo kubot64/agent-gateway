@@ -61,4 +61,7 @@ def _build_command_text(*, command_name: str, options: Mapping[str, str]) -> str
         action = options.get("action", "add")
         title = options.get("title", "")
         return f"/task {action} {title}".strip()
+    if command_name == "mode":
+        mode = options.get("value", "")
+        return f"/mode {mode}".strip()
     return str(options.get("text", "")).strip()

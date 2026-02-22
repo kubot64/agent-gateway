@@ -283,6 +283,7 @@ docs/
 - `/summarize` 実動化（会話履歴を保持して要約）
 - docs.search（ローカルMarkdown検索で質問前に文脈を取得）
 - `/task add` のLinear連携（`LINEAR_API_KEY`, `LINEAR_TEAM_ID`）
+- `/mode brief|detailed` のユーザー設定保存
 - `reminder.create` 永続化（SQLite）
 - Confirm/Cancel TTL（5分）
 - 監査ログ保存（SQLite `audit_logs`）
@@ -294,6 +295,8 @@ docs/
 - ストレージ切替（`DATABASE_BACKEND=sqlite|postgres`）
 - idempotency切替（`IDEMPOTENCY_BACKEND=sqlite|postgres|redis`）
 - `infra/docker-compose.yml` で Postgres/Redis のローカル起動をサポート
+- `infra/docker-compose.yml` の `app` profile で API コンテナ起動をサポート
+- `backend/scripts/e2e_pg_redis.sh` で API E2E 検証を自動化
 - Confirm/Cancel Block Kit
   - `action_id=confirm|cancel`
   - `value=confirmation_id`

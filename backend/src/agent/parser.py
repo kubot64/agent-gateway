@@ -28,6 +28,9 @@ class CommandParser:
         if lowered.startswith("/task"):
             return self._parse_task_payload(cleaned[len("/task") :].strip())
 
+        if lowered.startswith("/mode"):
+            return self._parse_mode_payload(cleaned[len("/mode") :].strip())
+
         # very small natural language rule for kickoff implementation
         if "リマインド" in cleaned and "明日" in cleaned:
             remind_at = datetime.now(timezone.utc) + timedelta(days=1)
@@ -80,3 +83,9 @@ class CommandParser:
             return Command(intent=Intent.TASK, payload={"action": "add", "title": title})
 
         return Command(intent=Intent.TASK, payload={"raw": cleaned})
+
+    def _parse_mode_payload(self, payload: str) -> Command:
+        mode = payload.strip().lower()
+        if mode in {"brief", "detailed"}:
+            return Command(intent=Intent.MODE, payload={"mode": mode})
+        return Command(intent=Intent.MODE, payload={"raw": payload.strip()})

@@ -43,6 +43,10 @@ class AgentServiceTests(unittest.TestCase):
         def answer(self, question: str) -> str:
             return f"SUMMARY::{question[:40]}"
 
+    class FakeLongLLMClient:
+        def answer(self, question: str) -> str:
+            return "L" * 220
+
     class FakeTaskClient:
         def __init__(self, should_fail: bool = False) -> None:
             self.should_fail = should_fail
@@ -121,6 +125,23 @@ class AgentServiceTests(unittest.TestCase):
         service = AgentService(task_client=self.FakeTaskClient())
         response = service.handle_message(build_event("/task add"))
         self.assertEqual(response.status, "validation_error")
+
+    def test_mode_brief_truncates_ask(self) -> None:
+        service = AgentService(llm_client=self.FakeLongLLMClient())
+        mode_resp = service.handle_message(build_event("/mode brief"))
+        self.assertEqual(mode_resp.status, "completed")
+        ask_resp = service.handle_message(build_event("/ask 長文確認"))
+        self.assertEqual(ask_resp.status, "completed")
+        self.assertLessEqual(len(ask_resp.text), 143)
+        self.assertTrue(ask_resp.text.endswith("..."))
+
+    def test_mode_detailed_keeps_full_length(self) -> None:
+        service = AgentService(llm_client=self.FakeLongLLMClient())
+        mode_resp = service.handle_message(build_event("/mode detailed"))
+        self.assertEqual(mode_resp.status, "completed")
+        ask_resp = service.handle_message(build_event("/ask 長文確認"))
+        self.assertEqual(ask_resp.status, "completed")
+        self.assertEqual(len(ask_resp.text), 220)
 
     def test_task_add_integration_error(self) -> None:
         service = AgentService(task_client=self.FakeTaskClient(should_fail=True))
@@ -528,6 +549,21 @@ class DiscordInboundTests(unittest.TestCase):
         self.assertEqual(payload["team_id"], "G1")
         self.assertEqual(payload["event"]["channel"], "D1")
         self.assertEqual(payload["event"]["text"], "/ask 今日の予定は？")
+
+    def test_normalize_discord_interaction_mode(self) -> None:
+        payload = normalize_discord_interaction(
+            {
+                "id": "i-mode",
+                "guild_id": "G1",
+                "channel_id": "D1",
+                "member": {"user": {"id": "U1"}},
+                "data": {
+                    "name": "mode",
+                    "options": [{"name": "value", "value": "detailed"}],
+                },
+            }
+        )
+        self.assertEqual(payload["event"]["text"], "/mode detailed")
 
     def test_handle_discord_ping(self) -> None:
         response = handle_discord_interaction({"type": 1})

@@ -88,6 +88,18 @@ class SQLiteDatabase:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_preferences (
+                    platform TEXT NOT NULL,
+                    workspace_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (platform, workspace_id, user_id)
+                )
+                """
+            )
 
     def health_check(self) -> bool:
         try:
@@ -172,6 +184,18 @@ class PostgresDatabase:
                     message_id TEXT NOT NULL,
                     text TEXT NOT NULL,
                     ts TIMESTAMPTZ NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_preferences (
+                    platform TEXT NOT NULL,
+                    workspace_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL,
+                    PRIMARY KEY (platform, workspace_id, user_id)
                 )
                 """
             )
@@ -442,6 +466,42 @@ class SQLiteConversationStore:
         ]
 
 
+class SQLiteUserPreferenceStore:
+    def __init__(self, database: SQLiteDatabase) -> None:
+        self.database = database
+
+    def get_mode(self, *, platform: str, workspace_id: str, user_id: str) -> str:
+        with self.database.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT mode
+                FROM user_preferences
+                WHERE platform = ? AND workspace_id = ? AND user_id = ?
+                """,
+                (platform, workspace_id, user_id),
+            ).fetchone()
+        return str(row[0]) if row else "brief"
+
+    def set_mode(self, *, platform: str, workspace_id: str, user_id: str, mode: str) -> None:
+        with self.database.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO user_preferences (
+                    platform, workspace_id, user_id, mode, updated_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(platform, workspace_id, user_id)
+                DO UPDATE SET mode = excluded.mode, updated_at = excluded.updated_at
+                """,
+                (
+                    platform,
+                    workspace_id,
+                    user_id,
+                    mode,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+
+
 class PostgresReminderStore:
     def __init__(self, database: PostgresDatabase) -> None:
         self.database = database
@@ -684,6 +744,42 @@ class PostgresConversationStore:
             )
             for r in rows
         ]
+
+
+class PostgresUserPreferenceStore:
+    def __init__(self, database: PostgresDatabase) -> None:
+        self.database = database
+
+    def get_mode(self, *, platform: str, workspace_id: str, user_id: str) -> str:
+        with self.database.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT mode
+                FROM user_preferences
+                WHERE platform = %s AND workspace_id = %s AND user_id = %s
+                """,
+                (platform, workspace_id, user_id),
+            ).fetchone()
+        return str(row[0]) if row else "brief"
+
+    def set_mode(self, *, platform: str, workspace_id: str, user_id: str, mode: str) -> None:
+        with self.database.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO user_preferences (
+                    platform, workspace_id, user_id, mode, updated_at
+                ) VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (platform, workspace_id, user_id)
+                DO UPDATE SET mode = EXCLUDED.mode, updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    platform,
+                    workspace_id,
+                    user_id,
+                    mode,
+                    datetime.now(timezone.utc),
+                ),
+            )
 
 
 class RedisIdempotencyStore:

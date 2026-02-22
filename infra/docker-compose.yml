@@ -1,6 +1,27 @@
 version: "3.9"
 
 services:
+  app:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: home-agent-api
+    restart: unless-stopped
+    environment:
+      DATABASE_BACKEND: postgres
+      POSTGRES_DSN: postgresql://home:home@postgres:5432/home
+      IDEMPOTENCY_BACKEND: redis
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    profiles:
+      - app
+
   postgres:
     image: postgres:16-alpine
     container_name: home-postgres
