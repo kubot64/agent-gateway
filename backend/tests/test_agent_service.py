@@ -13,7 +13,7 @@ from adapters.slack.web_api import SlackAPIError, SlackWebAPIClient
 from agent.llm import LocalFallbackLLMClient
 from agent.models import InboundEvent
 from agent.service import AgentService, InMemoryMetricStore
-from agent.search import LocalMarkdownSearchClient, SearchResult
+from agent.search import LocalMarkdownSearchClient, LocalVectorSearchClient, SearchResult, build_default_search_client
 from agent.task import TaskClientError
 from api.discord_payloads import normalize_discord_interaction
 from api.discord_security import DiscordSignatureVerificationError, verify_discord_signature
@@ -455,6 +455,33 @@ class SearchClientTests(unittest.TestCase):
                 self.assertEqual(results[0].path, "docs/a.md")
             finally:
                 root.cleanup()
+
+    def test_local_vector_search_client(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = tempfile.TemporaryDirectory(dir=tmp_dir)
+            try:
+                base = f"{root.name}/workspace"
+                from pathlib import Path
+
+                docs_dir = Path(base) / "docs"
+                docs_dir.mkdir(parents=True, exist_ok=True)
+                (docs_dir / "a.md").write_text("# Note\nSlack署名検証を実装した。", encoding="utf-8")
+                (docs_dir / "b.md").write_text("# Other\n休暇の計画メモ。", encoding="utf-8")
+
+                client = LocalVectorSearchClient(
+                    root_dir=Path(base),
+                    include_paths=("docs",),
+                )
+                results = client.search("署名検証", limit=3)
+                self.assertGreaterEqual(len(results), 1)
+                self.assertEqual(results[0].path, "docs/a.md")
+            finally:
+                root.cleanup()
+
+    def test_build_default_search_client_vector_backend(self) -> None:
+        with _temporary_env({"DOC_SEARCH_BACKEND": "vector"}):
+            client = build_default_search_client()
+        self.assertIsInstance(client, LocalVectorSearchClient)
 
 
 class InfraFactoryTests(unittest.TestCase):
