@@ -174,3 +174,11 @@ async def confirm_action(request: Request) -> JSONResponse:
     payload = await request.json()
     result = inbound.handle_confirmation(payload, request_id=request_id)
     return JSONResponse(result, headers={"x-request-id": request_id})
+
+
+@app.post("/api/agent/handle-message")
+async def handle_message(request: Request) -> JSONResponse:
+    request_id = str(getattr(request.state, "request_id", ""))
+    payload = await request.json()
+    result = inbound.handle_agent_message(payload, request_id=request_id)
+    return JSONResponse(result, headers={"x-request-id": request_id})

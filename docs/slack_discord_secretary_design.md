@@ -275,6 +275,7 @@ docs/
   - Ed25519 署名検証（`X-Signature-Ed25519` / `X-Signature-Timestamp`）
   - 重複イベント排除（interaction id）
 - Agent API
+  - `POST /api/agent/handle-message`
   - `POST /api/agent/confirm-action`
   - `GET /api/health`
   - `GET /api/metrics`
@@ -300,4 +301,3 @@ docs/
 
 ### 実装との差分メモ
 - 設計上は PostgreSQL + Redis を想定しているが、現実装は SQLite 単体。
-- `POST /api/agent/handle-message` は未公開。現状は Slack inbound 経由で処理。

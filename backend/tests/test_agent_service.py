@@ -17,7 +17,7 @@ from agent.search import LocalMarkdownSearchClient, SearchResult
 from agent.task import TaskClientError
 from api.discord_payloads import normalize_discord_interaction
 from api.discord_security import DiscordSignatureVerificationError, verify_discord_signature
-from api.inbound import handle_discord_interaction, handle_slack_command, handle_slack_event, handle_slack_interaction
+from api.inbound import handle_agent_message, handle_discord_interaction, handle_slack_command, handle_slack_event, handle_slack_interaction
 from api.security import verify_slack_signature
 from api.slack_payloads import extract_confirmation_from_interaction, normalize_slash_command, parse_interaction_payload
 from api.slack_responses import build_slack_response
@@ -219,6 +219,20 @@ class SecurityTests(unittest.TestCase):
         }
         response = handle_slack_event(payload, request_id="req-123")
         self.assertEqual(response["metadata"]["request_id"], "req-123")
+
+    def test_handle_agent_message_direct(self) -> None:
+        response = handle_agent_message(
+            {
+                "platform": "api",
+                "workspace_id": "W1",
+                "channel_id": "direct",
+                "user_id": "U1",
+                "text": "/ask こんにちは",
+            },
+            request_id="req-direct-1",
+        )
+        self.assertEqual(response["status"], "completed")
+        self.assertEqual(response["metadata"]["request_id"], "req-direct-1")
 
 
 class SlackPayloadTests(unittest.TestCase):

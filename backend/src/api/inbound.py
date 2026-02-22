@@ -84,6 +84,28 @@ def handle_confirmation(payload: dict, *, request_id: str | None = None) -> dict
     }
 
 
+def handle_agent_message(payload: Mapping[str, Any], *, request_id: str | None = None) -> dict:
+    event = InboundEvent(
+        platform=str(payload.get("platform", "api")),
+        workspace_id=str(payload.get("workspace_id", "direct")),
+        channel_id=str(payload.get("channel_id", "direct")),
+        thread_id=str(payload.get("thread_id")) if payload.get("thread_id") is not None else None,
+        user_id=str(payload.get("user_id", "unknown")),
+        message_id=str(payload.get("message_id", f"api-{datetime.now(timezone.utc).timestamp()}")),
+        text=str(payload.get("text", "")),
+        ts=datetime.now(timezone.utc),
+    )
+    response = service.handle_message(event, request_id=request_id)
+    metadata = dict(response.metadata)
+    if request_id:
+        metadata["request_id"] = request_id
+    return {
+        "status": response.status,
+        "text": response.text,
+        "metadata": metadata,
+    }
+
+
 def handle_slack_command(
     form_payload: Mapping[str, str],
     *,
