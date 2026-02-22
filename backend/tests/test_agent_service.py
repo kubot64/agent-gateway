@@ -12,6 +12,7 @@ from adapters.slack.web_api import SlackAPIError, SlackWebAPIClient
 from agent.llm import LocalFallbackLLMClient
 from agent.models import InboundEvent
 from agent.service import AgentService, InMemoryMetricStore
+from agent.search import LocalMarkdownSearchClient, SearchResult
 from agent.task import TaskClientError
 from api.discord_payloads import normalize_discord_interaction
 from api.discord_security import DiscordSignatureVerificationError, verify_discord_signature
@@ -48,6 +49,13 @@ class AgentServiceTests(unittest.TestCase):
                 "task_id": "ENG-123",
                 "url": "https://linear.app/example/issue/ENG-123",
             }
+
+    class FakeSearchClient:
+        def __init__(self, results: list[SearchResult]) -> None:
+            self._results = results
+
+        def search(self, query: str, *, limit: int = 3) -> list[SearchResult]:
+            return self._results[:limit]
 
     def test_ask_command_uses_llm(self) -> None:
         service = AgentService(llm_client=LocalFallbackLLMClient())
@@ -105,6 +113,24 @@ class AgentServiceTests(unittest.TestCase):
         service.handle_message(build_event("/ask test"))
         self.assertGreaterEqual(len(metric_store.records), 1)
         self.assertEqual(metric_store.records[0]["intent"], "ask")
+
+    def test_ask_includes_sources_from_search(self) -> None:
+        service = AgentService(
+            llm_client=LocalFallbackLLMClient(),
+            search_client=self.FakeSearchClient(
+                [
+                    SearchResult(
+                        path="docs/example.md",
+                        snippet="署名検証を実装する",
+                        score=3,
+                    )
+                ]
+            ),
+        )
+        response = service.handle_message(build_event("/ask 署名検証って何？"))
+        self.assertEqual(response.status, "completed")
+        self.assertEqual(response.metadata.get("sources"), ["docs/example.md"])
+        self.assertIn("参考情報", response.text)
 
 
 class SecurityTests(unittest.TestCase):
@@ -330,6 +356,30 @@ class SQLiteStoreTests(unittest.TestCase):
             summary = metric_store.summary()
             self.assertEqual(summary["total"], 2)
             self.assertEqual(summary["errors"], 1)
+
+
+class SearchClientTests(unittest.TestCase):
+    def test_local_markdown_search_client(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = tempfile.TemporaryDirectory(dir=tmp_dir)
+            try:
+                base = f"{root.name}/workspace"
+                from pathlib import Path
+
+                docs_dir = Path(base) / "docs"
+                docs_dir.mkdir(parents=True, exist_ok=True)
+                (docs_dir / "a.md").write_text("# Note\nSlack署名検証を実装した。", encoding="utf-8")
+                (docs_dir / "b.md").write_text("# Other\n無関係なテキスト。", encoding="utf-8")
+
+                client = LocalMarkdownSearchClient(
+                    root_dir=Path(base),
+                    include_paths=("docs",),
+                )
+                results = client.search("署名検証", limit=3)
+                self.assertGreaterEqual(len(results), 1)
+                self.assertEqual(results[0].path, "docs/a.md")
+            finally:
+                root.cleanup()
 
 
 class SlackWebAPITests(unittest.TestCase):

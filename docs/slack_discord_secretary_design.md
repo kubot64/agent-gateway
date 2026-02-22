@@ -279,6 +279,7 @@ docs/
   - `GET /api/health`
   - `GET /api/metrics`
 - `/ask` のLLM接続（OpenAI + ローカルフォールバック）
+- docs.search（ローカルMarkdown検索で質問前に文脈を取得）
 - `/task add` のLinear連携（`LINEAR_API_KEY`, `LINEAR_TEAM_ID`）
 - `reminder.create` 永続化（SQLite）
 - Confirm/Cancel TTL（5分）
@@ -289,7 +290,7 @@ docs/
   - `value=confirmation_id`
 
 ### 未実装
-- RAG検索
+- 高度RAG（Vector DB + 権限制御）
 - 本番向け可観測性（トレース/メトリクス外部連携）
 - PostgreSQL / Redis への移行
 

@@ -10,6 +10,7 @@ from uuid import uuid4
 from .llm import LLMClient, build_default_llm_client
 from .models import AgentResponse, Command, InboundEvent, Intent, PendingConfirmation, Reminder
 from .parser import CommandParser
+from .search import DocsSearchClient, SearchResult, build_default_search_client
 from .task import TaskClient, TaskClientError, build_default_task_client
 
 
@@ -106,6 +107,7 @@ class AgentService:
         audit_store: AuditLogStore | None = None,
         metric_store: MetricStore | None = None,
         llm_client: LLMClient | None = None,
+        search_client: DocsSearchClient | None = None,
         task_client: TaskClient | None = None,
         confirmation_ttl: timedelta = timedelta(minutes=5),
         now_provider: Callable[[], datetime] | None = None,
@@ -115,6 +117,7 @@ class AgentService:
         self.audit_store = audit_store or InMemoryAuditLogStore()
         self.metric_store = metric_store or InMemoryMetricStore()
         self.llm_client = llm_client or build_default_llm_client()
+        self.search_client = search_client or build_default_search_client()
         self.task_client = task_client or build_default_task_client()
         self.pending_confirmations: dict[str, PendingConfirmation] = {}
         self.confirmation_ttl = confirmation_ttl
@@ -126,8 +129,13 @@ class AgentService:
 
         if command.intent is Intent.ASK:
             question = command.payload.get("question") or "質問が空です。"
-            answer = self.llm_client.answer(str(question))
-            response = AgentResponse(text=answer, status="completed")
+            context_results = self.search_client.search(str(question), limit=3)
+            llm_input = _build_ask_prompt(str(question), context_results)
+            answer = self.llm_client.answer(llm_input)
+            metadata: dict[str, object] = {}
+            if context_results:
+                metadata["sources"] = [r.path for r in context_results]
+            response = AgentResponse(text=answer, status="completed", metadata=metadata)
             self._log(action="handle_message", event=event, command=command, response=response)
             self._record_metric(event=event, command=command, response=response, duration_ms=_duration_ms(start))
             return response
@@ -327,3 +335,18 @@ class AgentService:
 
 def _duration_ms(start: float) -> int:
     return int((time.perf_counter() - start) * 1000)
+
+
+def _build_ask_prompt(question: str, search_results: list[SearchResult]) -> str:
+    if not search_results:
+        return question
+
+    lines = [
+        f"質問: {question}",
+        "参考情報:",
+    ]
+    for idx, result in enumerate(search_results, start=1):
+        lines.append(f"{idx}. source={result.path}")
+        lines.append(f"   snippet={result.snippet}")
+    lines.append("参考情報に基づいて簡潔に回答してください。")
+    return "\n".join(lines)
