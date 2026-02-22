@@ -47,6 +47,7 @@ def handle_slack_event(
     headers: Mapping[str, str] | None = None,
     raw_body: bytes | None = None,
     signing_secret: str | None = None,
+    request_id: str | None = None,
 ) -> dict:
     """Framework-agnostic entrypoint used by future web handlers."""
     if signing_secret:
@@ -56,7 +57,15 @@ def handle_slack_event(
         try:
             verify_slack_signature(signing_secret=signing_secret, raw_body=body, headers=headers or {})
         except SignatureVerificationError:
-            return {"status": "unauthorized", "text": "署名検証に失敗しました。", "metadata": {}}
+            return {
+                "status": "unauthorized",
+                "text": "署名検証に失敗しました。",
+                "metadata": {
+                    "request_id": request_id,
+                    "error_type": "signature_verification_error",
+                    "error_message": "invalid slack signature",
+                },
+            }
 
     event = _normalize_slack_event(payload)
     idempotency_key = _build_slack_idempotency_key(payload, event)
@@ -64,25 +73,32 @@ def handle_slack_event(
         return {
             "status": "duplicate",
             "text": "重複イベントのためスキップしました。",
-            "metadata": {"idempotency_key": idempotency_key},
+            "metadata": {"idempotency_key": idempotency_key, "request_id": request_id},
         }
-    response = service.handle_message(event)
+    response = service.handle_message(event, request_id=request_id)
+    metadata = dict(response.metadata)
+    if request_id:
+        metadata["request_id"] = request_id
     return {
         "status": response.status,
         "text": response.text,
-        "metadata": response.metadata,
+        "metadata": metadata,
     }
 
 
-def handle_confirmation(payload: dict) -> dict:
+def handle_confirmation(payload: dict, *, request_id: str | None = None) -> dict:
     response = service.confirm_action(
         confirmation_id=str(payload.get("confirmation_id", "")),
         approved=bool(payload.get("approved", False)),
+        request_id=request_id,
     )
+    metadata = dict(response.metadata)
+    if request_id:
+        metadata["request_id"] = request_id
     return {
         "status": response.status,
         "text": response.text,
-        "metadata": response.metadata,
+        "metadata": metadata,
     }
 
 
@@ -92,6 +108,7 @@ def handle_slack_command(
     headers: Mapping[str, str] | None = None,
     raw_body: bytes | None = None,
     signing_secret: str | None = None,
+    request_id: str | None = None,
 ) -> dict:
     normalized_payload = normalize_slash_command(form_payload)
     agent_response = handle_slack_event(
@@ -99,6 +116,7 @@ def handle_slack_command(
         headers=headers,
         raw_body=raw_body,
         signing_secret=signing_secret,
+        request_id=request_id,
     )
     return build_slack_response(agent_response)
 
@@ -109,6 +127,7 @@ def handle_slack_interaction(
     headers: Mapping[str, str] | None = None,
     raw_body: bytes | None = None,
     signing_secret: str | None = None,
+    request_id: str | None = None,
 ) -> dict:
     if signing_secret:
         body = raw_body
@@ -117,7 +136,15 @@ def handle_slack_interaction(
         try:
             verify_slack_signature(signing_secret=signing_secret, raw_body=body, headers=headers or {})
         except SignatureVerificationError:
-            return {"status": "unauthorized", "text": "署名検証に失敗しました。", "metadata": {}}
+            return {
+                "status": "unauthorized",
+                "text": "署名検証に失敗しました。",
+                "metadata": {
+                    "request_id": request_id,
+                    "error_type": "signature_verification_error",
+                    "error_message": "invalid slack signature",
+                },
+            }
 
     payload = parse_interaction_payload(form_payload)
     confirmation = extract_confirmation_from_interaction(payload)
@@ -129,7 +156,7 @@ def handle_slack_interaction(
                 "metadata": {},
             }
         )
-    agent_response = handle_confirmation(confirmation)
+    agent_response = handle_confirmation(confirmation, request_id=request_id)
     return build_slack_response(agent_response)
 
 
@@ -139,6 +166,7 @@ def handle_discord_interaction(
     headers: Mapping[str, str] | None = None,
     raw_body: bytes | None = None,
     public_key: str | None = None,
+    request_id: str | None = None,
 ) -> dict:
     if public_key:
         body = raw_body if raw_body is not None else json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
@@ -149,7 +177,15 @@ def handle_discord_interaction(
                 headers=headers or {},
             )
         except DiscordSignatureVerificationError:
-            return {"status": "unauthorized", "text": "署名検証に失敗しました。", "metadata": {}}
+            return {
+                "status": "unauthorized",
+                "text": "署名検証に失敗しました。",
+                "metadata": {
+                    "request_id": request_id,
+                    "error_type": "signature_verification_error",
+                    "error_message": "invalid discord signature",
+                },
+            }
 
     if is_discord_ping(payload):
         return {"type": 1}
@@ -160,19 +196,22 @@ def handle_discord_interaction(
             "type": 4,
             "data": {"content": "重複イベントのためスキップしました。"},
             "status": "duplicate",
-            "metadata": {"idempotency_key": idempotency_key},
+            "metadata": {"idempotency_key": idempotency_key, "request_id": request_id},
         }
 
     normalized_payload = normalize_discord_interaction(payload)
-    agent_response = handle_slack_event(normalized_payload)
+    agent_response = handle_slack_event(normalized_payload, request_id=request_id)
     content = str(agent_response.get("text", ""))
+    metadata = dict(agent_response.get("metadata", {}))
+    if request_id:
+        metadata["request_id"] = request_id
     return {
         "type": 4,
         "data": {
             "content": content,
         },
         "status": agent_response.get("status", "unknown"),
-        "metadata": agent_response.get("metadata", {}),
+        "metadata": metadata,
     }
 
 

@@ -156,6 +156,7 @@ class SecurityTests(unittest.TestCase):
             signing_secret="secret",
         )
         self.assertEqual(response["status"], "unauthorized")
+        self.assertEqual(response["metadata"]["error_type"], "signature_verification_error")
 
     def test_verify_discord_signature_accepts_valid_with_custom_verifier(self) -> None:
         called: dict[str, object] = {}
@@ -202,6 +203,20 @@ class SecurityTests(unittest.TestCase):
         second = handle_slack_event(payload)
         self.assertEqual(first["status"], "completed")
         self.assertEqual(second["status"], "duplicate")
+
+    def test_request_id_is_propagated_to_metadata(self) -> None:
+        payload = {
+            "event_id": f"evt-{uuid4()}",
+            "team_id": "T1",
+            "event": {
+                "ts": "1700000000",
+                "channel": "C1",
+                "user": "U1",
+                "text": "/ask hello",
+            },
+        }
+        response = handle_slack_event(payload, request_id="req-123")
+        self.assertEqual(response["metadata"]["request_id"], "req-123")
 
 
 class SlackPayloadTests(unittest.TestCase):
@@ -356,6 +371,10 @@ class SQLiteStoreTests(unittest.TestCase):
             summary = metric_store.summary()
             self.assertEqual(summary["total"], 2)
             self.assertEqual(summary["errors"], 1)
+            self.assertEqual(summary["by_intent"]["ask"], 2)
+            self.assertEqual(summary["by_status"]["completed"], 1)
+            self.assertEqual(summary["by_status"]["integration_error"], 1)
+            self.assertEqual(database.health_check(), True)
 
 
 class SearchClientTests(unittest.TestCase):

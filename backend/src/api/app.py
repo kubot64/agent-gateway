@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from uuid import uuid4
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -11,6 +12,15 @@ from api import inbound
 from api.slack_payloads import extract_challenge, is_url_verification
 
 app = FastAPI(title="home-secretary-backend", version="0.1.0")
+
+
+@app.middleware("http")
+async def attach_request_id(request: Request, call_next: Any) -> Any:
+    request_id = request.headers.get("x-request-id", "").strip() or str(uuid4())
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers["x-request-id"] = request_id
+    return response
 
 
 def _signing_secret() -> str | None:
@@ -60,7 +70,8 @@ def _try_post_reply(payload: dict, text: str) -> None:
 
 @app.get("/api/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok"}
+    db_ok = inbound.database.health_check()
+    return {"status": "ok" if db_ok else "degraded", "database": "ok" if db_ok else "error"}
 
 
 @app.get("/api/metrics")
@@ -80,6 +91,7 @@ async def metrics() -> dict[str, Any]:
 
 @app.post("/api/inbound/slack/events")
 async def inbound_slack_events(request: Request) -> JSONResponse:
+    request_id = str(getattr(request.state, "request_id", ""))
     raw_body = await request.body()
     payload = await request.json()
 
@@ -91,17 +103,23 @@ async def inbound_slack_events(request: Request) -> JSONResponse:
         headers=request.headers,
         raw_body=raw_body,
         signing_secret=_signing_secret(),
+        request_id=request_id,
     )
     if result.get("status") == "unauthorized":
-        return JSONResponse(result, status_code=401)
+        return JSONResponse(result, status_code=401, headers={"x-request-id": request_id})
 
     if result.get("status") != "duplicate":
         _try_post_reply(payload, str(result.get("text", "")))
-    return JSONResponse({"ok": True, "status": result.get("status"), "metadata": result.get("metadata", {})}, status_code=200)
+    return JSONResponse(
+        {"ok": True, "status": result.get("status"), "metadata": result.get("metadata", {})},
+        status_code=200,
+        headers={"x-request-id": request_id},
+    )
 
 
 @app.post("/api/inbound/slack/commands")
 async def inbound_slack_commands(request: Request) -> JSONResponse | PlainTextResponse:
+    request_id = str(getattr(request.state, "request_id", ""))
     raw_body = await request.body()
     form = await request.form()
     form_payload = {k: str(v) for k, v in form.items()}
@@ -110,13 +128,15 @@ async def inbound_slack_commands(request: Request) -> JSONResponse | PlainTextRe
         headers=request.headers,
         raw_body=raw_body,
         signing_secret=_signing_secret(),
+        request_id=request_id,
     )
     status_code = 401 if result.get("status") == "unauthorized" else 200
-    return JSONResponse(result, status_code=status_code)
+    return JSONResponse(result, status_code=status_code, headers={"x-request-id": request_id})
 
 
 @app.post("/api/inbound/slack/interactions")
 async def inbound_slack_interactions(request: Request) -> JSONResponse:
+    request_id = str(getattr(request.state, "request_id", ""))
     raw_body = await request.body()
     form = await request.form()
     form_payload = {k: str(v) for k, v in form.items()}
@@ -125,13 +145,15 @@ async def inbound_slack_interactions(request: Request) -> JSONResponse:
         headers=request.headers,
         raw_body=raw_body,
         signing_secret=_signing_secret(),
+        request_id=request_id,
     )
     status_code = 401 if result.get("status") == "unauthorized" else 200
-    return JSONResponse(result, status_code=status_code)
+    return JSONResponse(result, status_code=status_code, headers={"x-request-id": request_id})
 
 
 @app.post("/api/inbound/discord/interactions")
 async def inbound_discord_interactions(request: Request) -> JSONResponse:
+    request_id = str(getattr(request.state, "request_id", ""))
     raw_body = await request.body()
     payload = await request.json()
     result = inbound.handle_discord_interaction(
@@ -139,14 +161,16 @@ async def inbound_discord_interactions(request: Request) -> JSONResponse:
         headers=request.headers,
         raw_body=raw_body,
         public_key=_discord_public_key(),
+        request_id=request_id,
     )
     if result.get("status") == "unauthorized":
-        return JSONResponse(result, status_code=401)
-    return JSONResponse(result)
+        return JSONResponse(result, status_code=401, headers={"x-request-id": request_id})
+    return JSONResponse(result, headers={"x-request-id": request_id})
 
 
 @app.post("/api/agent/confirm-action")
 async def confirm_action(request: Request) -> JSONResponse:
+    request_id = str(getattr(request.state, "request_id", ""))
     payload = await request.json()
-    result = inbound.handle_confirmation(payload)
-    return JSONResponse(result)
+    result = inbound.handle_confirmation(payload, request_id=request_id)
+    return JSONResponse(result, headers={"x-request-id": request_id})

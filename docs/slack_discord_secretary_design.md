@@ -285,6 +285,8 @@ docs/
 - Confirm/Cancel TTL（5分）
 - 監査ログ保存（SQLite `audit_logs`）
 - command metrics 保存（SQLite `command_metrics`）
+- request_id 付与（HTTPヘッダ + 監査ログ）
+- health check に DB接続状態を追加
 - Confirm/Cancel Block Kit
   - `action_id=confirm|cancel`
   - `value=confirmation_id`

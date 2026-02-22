@@ -31,6 +31,9 @@ class MetricStore(Protocol):
     def record(self, *, platform: str | None, intent: str | None, status: str, duration_ms: int) -> str:
         ...
 
+    def summary(self) -> dict[str, object]:
+        ...
+
 
 class InMemoryReminderStore:
     """In-memory store for kickoff implementation."""
@@ -98,6 +101,33 @@ class InMemoryMetricStore:
     def records(self) -> list[dict[str, str | int | None]]:
         return self._records
 
+    def summary(self) -> dict[str, object]:
+        total = len(self._records)
+        error_statuses = {"integration_error", "validation_error", "failed", "unauthorized"}
+        errors = len([r for r in self._records if str(r.get("status")) in error_statuses])
+        durations = [int(r["duration_ms"]) for r in self._records if isinstance(r.get("duration_ms"), int)]
+        avg_duration = int(sum(durations) / len(durations)) if durations else 0
+        p95 = 0
+        if durations:
+            sorted_durations = sorted(durations)
+            idx = max(0, int(len(sorted_durations) * 0.95) - 1)
+            p95 = sorted_durations[idx]
+        by_intent: dict[str, int] = {}
+        by_status: dict[str, int] = {}
+        for row in self._records:
+            intent = str(row.get("intent") or "unknown")
+            status = str(row.get("status") or "unknown")
+            by_intent[intent] = by_intent.get(intent, 0) + 1
+            by_status[status] = by_status.get(status, 0) + 1
+        return {
+            "total": total,
+            "errors": errors,
+            "avg_duration_ms": avg_duration,
+            "p95_duration_ms": p95,
+            "by_intent": by_intent,
+            "by_status": by_status,
+        }
+
 
 class AgentService:
     def __init__(
@@ -123,7 +153,7 @@ class AgentService:
         self.confirmation_ttl = confirmation_ttl
         self.now_provider = now_provider or (lambda: datetime.now(timezone.utc))
 
-    def handle_message(self, event: InboundEvent) -> AgentResponse:
+    def handle_message(self, event: InboundEvent, *, request_id: str | None = None) -> AgentResponse:
         start = time.perf_counter()
         command = self.parser.parse(event.text)
 
@@ -136,25 +166,25 @@ class AgentService:
             if context_results:
                 metadata["sources"] = [r.path for r in context_results]
             response = AgentResponse(text=answer, status="completed", metadata=metadata)
-            self._log(action="handle_message", event=event, command=command, response=response)
+            self._log(action="handle_message", event=event, command=command, response=response, request_id=request_id)
             self._record_metric(event=event, command=command, response=response, duration_ms=_duration_ms(start))
             return response
 
         if command.intent is Intent.SUMMARIZE:
             response = AgentResponse(text="要約ジョブを開始しました。", status="queued")
-            self._log(action="handle_message", event=event, command=command, response=response)
+            self._log(action="handle_message", event=event, command=command, response=response, request_id=request_id)
             self._record_metric(event=event, command=command, response=response, duration_ms=_duration_ms(start))
             return response
 
         if command.intent is Intent.REMIND:
             response = self._handle_remind(event, command)
-            self._log(action="handle_message", event=event, command=command, response=response)
+            self._log(action="handle_message", event=event, command=command, response=response, request_id=request_id)
             self._record_metric(event=event, command=command, response=response, duration_ms=_duration_ms(start))
             return response
 
         if command.intent is Intent.TASK:
             response = self._handle_task(event, command)
-            self._log(action="handle_message", event=event, command=command, response=response)
+            self._log(action="handle_message", event=event, command=command, response=response, request_id=request_id)
             self._record_metric(event=event, command=command, response=response, duration_ms=_duration_ms(start))
             return response
 
@@ -162,28 +192,49 @@ class AgentService:
             text="コマンドを解釈できませんでした。`/ask` `/summarize` `/remind` `/task` を使用してください。",
             status="unsupported",
         )
-        self._log(action="handle_message", event=event, command=command, response=response)
+        self._log(action="handle_message", event=event, command=command, response=response, request_id=request_id)
         self._record_metric(event=event, command=command, response=response, duration_ms=_duration_ms(start))
         return response
 
-    def confirm_action(self, confirmation_id: str, approved: bool) -> AgentResponse:
+    def confirm_action(self, confirmation_id: str, approved: bool, *, request_id: str | None = None) -> AgentResponse:
         start = time.perf_counter()
         pending = self.pending_confirmations.pop(confirmation_id, None)
         if pending is None:
             response = AgentResponse(text="確認対象が見つかりません。", status="not_found")
-            self._log(action="confirm_action", event=None, command=None, response=response, extra={"confirmation_id": confirmation_id})
+            self._log(
+                action="confirm_action",
+                event=None,
+                command=None,
+                response=response,
+                extra={"confirmation_id": confirmation_id},
+                request_id=request_id,
+            )
             self._record_metric(event=None, command=None, response=response, duration_ms=_duration_ms(start))
             return response
 
         if self.now_provider() > pending.expires_at:
             response = AgentResponse(text="確認期限が切れています。再実行してください。", status="expired")
-            self._log(action="confirm_action", event=None, command=pending.command, response=response, extra={"confirmation_id": confirmation_id})
+            self._log(
+                action="confirm_action",
+                event=None,
+                command=pending.command,
+                response=response,
+                extra={"confirmation_id": confirmation_id},
+                request_id=request_id,
+            )
             self._record_metric(event=None, command=pending.command, response=response, duration_ms=_duration_ms(start))
             return response
 
         if not approved:
             response = AgentResponse(text="操作をキャンセルしました。", status="cancelled")
-            self._log(action="confirm_action", event=None, command=pending.command, response=response, extra={"confirmation_id": confirmation_id})
+            self._log(
+                action="confirm_action",
+                event=None,
+                command=pending.command,
+                response=response,
+                extra={"confirmation_id": confirmation_id},
+                request_id=request_id,
+            )
             self._record_metric(event=None, command=pending.command, response=response, duration_ms=_duration_ms(start))
             return response
 
@@ -200,7 +251,14 @@ class AgentService:
             status="completed",
             metadata={"reminder_id": reminder.reminder_id},
         )
-        self._log(action="confirm_action", event=None, command=pending.command, response=response, extra={"confirmation_id": confirmation_id})
+        self._log(
+            action="confirm_action",
+            event=None,
+            command=pending.command,
+            response=response,
+            extra={"confirmation_id": confirmation_id},
+            request_id=request_id,
+        )
         self._record_metric(event=None, command=pending.command, response=response, duration_ms=_duration_ms(start))
         return response
 
@@ -213,6 +271,10 @@ class AgentService:
             return AgentResponse(
                 text=f"日時形式が不正です。例: /remind {example} レポート提出",
                 status="validation_error",
+                metadata={
+                    "error_type": "validation_error",
+                    "error_message": "invalid remind datetime format",
+                },
             )
 
         if command.requires_confirmation:
@@ -258,6 +320,10 @@ class AgentService:
             return AgentResponse(
                 text="形式が不正です。例: /task add バグ調査",
                 status="validation_error",
+                metadata={
+                    "error_type": "validation_error",
+                    "error_message": "invalid task command format",
+                },
             )
 
         title = str(command.payload.get("title", "")).strip()
@@ -265,6 +331,10 @@ class AgentService:
             return AgentResponse(
                 text="タスク内容が空です。例: /task add バグ調査",
                 status="validation_error",
+                metadata={
+                    "error_type": "validation_error",
+                    "error_message": "empty task title",
+                },
             )
 
         try:
@@ -277,6 +347,10 @@ class AgentService:
             return AgentResponse(
                 text=f"タスク登録に失敗しました: {exc}",
                 status="integration_error",
+                metadata={
+                    "error_type": "integration_error",
+                    "error_message": str(exc),
+                },
             )
 
         task_id = str(result.get("task_id", "")).strip() or "unknown"
@@ -301,11 +375,13 @@ class AgentService:
         command: Command | None,
         response: AgentResponse,
         extra: dict[str, str] | None = None,
+        request_id: str | None = None,
     ) -> None:
         details = {
             "intent": command.intent.value if command else None,
             "status": response.status,
             "metadata": response.metadata,
+            "request_id": request_id,
         }
         if extra:
             details.update(extra)

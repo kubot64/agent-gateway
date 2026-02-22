@@ -73,6 +73,14 @@ class SQLiteDatabase:
                 """
             )
 
+    def health_check(self) -> bool:
+        try:
+            with self.connect() as conn:
+                conn.execute("SELECT 1").fetchone()
+            return True
+        except sqlite3.Error:
+            return False
+
 
 class SQLiteReminderStore:
     def __init__(self, database: SQLiteDatabase) -> None:
@@ -209,7 +217,7 @@ class SQLiteCommandMetricStore:
             )
         return metric_id
 
-    def summary(self) -> dict[str, int]:
+    def summary(self) -> dict[str, object]:
         with self.database.connect() as conn:
             total = conn.execute("SELECT COUNT(*) FROM command_metrics").fetchone()
             errors = conn.execute(
@@ -225,6 +233,20 @@ class SQLiteCommandMetricStore:
                 ORDER BY duration_ms
                 """
             ).fetchall()
+            by_intent_rows = conn.execute(
+                """
+                SELECT COALESCE(intent, 'unknown') AS intent, COUNT(*)
+                FROM command_metrics
+                GROUP BY COALESCE(intent, 'unknown')
+                """
+            ).fetchall()
+            by_status_rows = conn.execute(
+                """
+                SELECT status, COUNT(*)
+                FROM command_metrics
+                GROUP BY status
+                """
+            ).fetchall()
 
         durations = [int(row[0]) for row in p95_row]
         p95 = 0
@@ -237,4 +259,6 @@ class SQLiteCommandMetricStore:
             "errors": int(errors[0] if errors else 0),
             "avg_duration_ms": int(avg[0] if avg and avg[0] is not None else 0),
             "p95_duration_ms": p95,
+            "by_intent": {str(row[0]): int(row[1]) for row in by_intent_rows},
+            "by_status": {str(row[0]): int(row[1]) for row in by_status_rows},
         }
