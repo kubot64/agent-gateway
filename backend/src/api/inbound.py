@@ -16,7 +16,7 @@ from api.slack_payloads import (
     parse_interaction_payload,
 )
 from api.slack_responses import build_slack_response
-from infra.stores import SQLiteAuditLogStore, SQLiteDatabase, SQLiteIdempotencyStore, SQLiteReminderStore
+from infra.stores import SQLiteAuditLogStore, SQLiteCommandMetricStore, SQLiteDatabase, SQLiteIdempotencyStore, SQLiteReminderStore
 
 
 def _default_database_path() -> str:
@@ -32,6 +32,7 @@ def _build_service(database: SQLiteDatabase) -> AgentService:
     return AgentService(
         reminder_store=SQLiteReminderStore(database),
         audit_store=SQLiteAuditLogStore(database),
+        metric_store=SQLiteCommandMetricStore(database),
     )
 
 

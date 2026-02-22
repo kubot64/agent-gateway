@@ -11,7 +11,7 @@ from uuid import uuid4
 from adapters.slack.web_api import SlackAPIError, SlackWebAPIClient
 from agent.llm import LocalFallbackLLMClient
 from agent.models import InboundEvent
-from agent.service import AgentService
+from agent.service import AgentService, InMemoryMetricStore
 from agent.task import TaskClientError
 from api.discord_payloads import normalize_discord_interaction
 from api.discord_security import DiscordSignatureVerificationError, verify_discord_signature
@@ -19,7 +19,7 @@ from api.inbound import handle_discord_interaction, handle_slack_command, handle
 from api.security import verify_slack_signature
 from api.slack_payloads import extract_confirmation_from_interaction, normalize_slash_command, parse_interaction_payload
 from api.slack_responses import build_slack_response
-from infra.stores import SQLiteAuditLogStore, SQLiteDatabase, SQLiteReminderStore
+from infra.stores import SQLiteAuditLogStore, SQLiteCommandMetricStore, SQLiteDatabase, SQLiteReminderStore
 
 
 def build_event(text: str) -> InboundEvent:
@@ -98,6 +98,13 @@ class AgentServiceTests(unittest.TestCase):
         service = AgentService(task_client=self.FakeTaskClient(should_fail=True))
         response = service.handle_message(build_event("/task add APIの不具合を調査"))
         self.assertEqual(response.status, "integration_error")
+
+    def test_metrics_are_recorded(self) -> None:
+        metric_store = InMemoryMetricStore()
+        service = AgentService(metric_store=metric_store)
+        service.handle_message(build_event("/ask test"))
+        self.assertGreaterEqual(len(metric_store.records), 1)
+        self.assertEqual(metric_store.records[0]["intent"], "ask")
 
 
 class SecurityTests(unittest.TestCase):
@@ -316,6 +323,13 @@ class SQLiteStoreTests(unittest.TestCase):
                 details='{"intent":"remind"}',
             )
             self.assertGreaterEqual(audit_store.count(), 1)
+
+            metric_store = SQLiteCommandMetricStore(database)
+            metric_store.record(platform="slack", intent="ask", status="completed", duration_ms=12)
+            metric_store.record(platform="slack", intent="ask", status="integration_error", duration_ms=30)
+            summary = metric_store.summary()
+            self.assertEqual(summary["total"], 2)
+            self.assertEqual(summary["errors"], 1)
 
 
 class SlackWebAPITests(unittest.TestCase):

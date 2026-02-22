@@ -68,9 +68,13 @@ async def metrics() -> dict[str, Any]:
     audit_store = inbound.service.audit_store
     count_fn = getattr(audit_store, "count", None)
     audit_count = int(count_fn()) if callable(count_fn) else -1
+    metric_store = inbound.service.metric_store
+    summary_fn = getattr(metric_store, "summary", None)
+    metric_summary = summary_fn() if callable(summary_fn) else {}
     return {
         "pending_confirmations": len(inbound.service.pending_confirmations),
         "audit_log_count": audit_count,
+        "command_metrics": metric_summary,
     }
 
 

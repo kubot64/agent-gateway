@@ -283,6 +283,7 @@ docs/
 - `reminder.create` 永続化（SQLite）
 - Confirm/Cancel TTL（5分）
 - 監査ログ保存（SQLite `audit_logs`）
+- command metrics 保存（SQLite `command_metrics`）
 - Confirm/Cancel Block Kit
   - `action_id=confirm|cancel`
   - `value=confirmation_id`

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timezone
 from datetime import timedelta
 from typing import Callable, Protocol
@@ -22,6 +23,11 @@ class ReminderStore(Protocol):
 
 class AuditLogStore(Protocol):
     def log(self, *, action: str, status: str, platform: str | None, user_id: str | None, details: str) -> str:
+        ...
+
+
+class MetricStore(Protocol):
+    def record(self, *, platform: str | None, intent: str | None, status: str, duration_ms: int) -> str:
         ...
 
 
@@ -70,12 +76,35 @@ class InMemoryAuditLogStore:
         return self._logs
 
 
+class InMemoryMetricStore:
+    def __init__(self) -> None:
+        self._records: list[dict[str, str | int | None]] = []
+
+    def record(self, *, platform: str | None, intent: str | None, status: str, duration_ms: int) -> str:
+        metric_id = str(uuid4())
+        self._records.append(
+            {
+                "metric_id": metric_id,
+                "platform": platform,
+                "intent": intent,
+                "status": status,
+                "duration_ms": duration_ms,
+            }
+        )
+        return metric_id
+
+    @property
+    def records(self) -> list[dict[str, str | int | None]]:
+        return self._records
+
+
 class AgentService:
     def __init__(
         self,
         parser: CommandParser | None = None,
         reminder_store: ReminderStore | None = None,
         audit_store: AuditLogStore | None = None,
+        metric_store: MetricStore | None = None,
         llm_client: LLMClient | None = None,
         task_client: TaskClient | None = None,
         confirmation_ttl: timedelta = timedelta(minutes=5),
@@ -84,6 +113,7 @@ class AgentService:
         self.parser = parser or CommandParser()
         self.reminder_store = reminder_store or InMemoryReminderStore()
         self.audit_store = audit_store or InMemoryAuditLogStore()
+        self.metric_store = metric_store or InMemoryMetricStore()
         self.llm_client = llm_client or build_default_llm_client()
         self.task_client = task_client or build_default_task_client()
         self.pending_confirmations: dict[str, PendingConfirmation] = {}
@@ -91,6 +121,7 @@ class AgentService:
         self.now_provider = now_provider or (lambda: datetime.now(timezone.utc))
 
     def handle_message(self, event: InboundEvent) -> AgentResponse:
+        start = time.perf_counter()
         command = self.parser.parse(event.text)
 
         if command.intent is Intent.ASK:
@@ -98,21 +129,25 @@ class AgentService:
             answer = self.llm_client.answer(str(question))
             response = AgentResponse(text=answer, status="completed")
             self._log(action="handle_message", event=event, command=command, response=response)
+            self._record_metric(event=event, command=command, response=response, duration_ms=_duration_ms(start))
             return response
 
         if command.intent is Intent.SUMMARIZE:
             response = AgentResponse(text="要約ジョブを開始しました。", status="queued")
             self._log(action="handle_message", event=event, command=command, response=response)
+            self._record_metric(event=event, command=command, response=response, duration_ms=_duration_ms(start))
             return response
 
         if command.intent is Intent.REMIND:
             response = self._handle_remind(event, command)
             self._log(action="handle_message", event=event, command=command, response=response)
+            self._record_metric(event=event, command=command, response=response, duration_ms=_duration_ms(start))
             return response
 
         if command.intent is Intent.TASK:
             response = self._handle_task(event, command)
             self._log(action="handle_message", event=event, command=command, response=response)
+            self._record_metric(event=event, command=command, response=response, duration_ms=_duration_ms(start))
             return response
 
         response = AgentResponse(
@@ -120,23 +155,28 @@ class AgentService:
             status="unsupported",
         )
         self._log(action="handle_message", event=event, command=command, response=response)
+        self._record_metric(event=event, command=command, response=response, duration_ms=_duration_ms(start))
         return response
 
     def confirm_action(self, confirmation_id: str, approved: bool) -> AgentResponse:
+        start = time.perf_counter()
         pending = self.pending_confirmations.pop(confirmation_id, None)
         if pending is None:
             response = AgentResponse(text="確認対象が見つかりません。", status="not_found")
             self._log(action="confirm_action", event=None, command=None, response=response, extra={"confirmation_id": confirmation_id})
+            self._record_metric(event=None, command=None, response=response, duration_ms=_duration_ms(start))
             return response
 
         if self.now_provider() > pending.expires_at:
             response = AgentResponse(text="確認期限が切れています。再実行してください。", status="expired")
             self._log(action="confirm_action", event=None, command=pending.command, response=response, extra={"confirmation_id": confirmation_id})
+            self._record_metric(event=None, command=pending.command, response=response, duration_ms=_duration_ms(start))
             return response
 
         if not approved:
             response = AgentResponse(text="操作をキャンセルしました。", status="cancelled")
             self._log(action="confirm_action", event=None, command=pending.command, response=response, extra={"confirmation_id": confirmation_id})
+            self._record_metric(event=None, command=pending.command, response=response, duration_ms=_duration_ms(start))
             return response
 
         payload = pending.command.payload
@@ -153,6 +193,7 @@ class AgentService:
             metadata={"reminder_id": reminder.reminder_id},
         )
         self._log(action="confirm_action", event=None, command=pending.command, response=response, extra={"confirmation_id": confirmation_id})
+        self._record_metric(event=None, command=pending.command, response=response, duration_ms=_duration_ms(start))
         return response
 
     def _handle_remind(self, event: InboundEvent, command: Command) -> AgentResponse:
@@ -267,3 +308,22 @@ class AgentService:
             user_id=event.user_id if event else None,
             details=json.dumps(details, ensure_ascii=False),
         )
+
+    def _record_metric(
+        self,
+        *,
+        event: InboundEvent | None,
+        command: Command | None,
+        response: AgentResponse,
+        duration_ms: int,
+    ) -> None:
+        self.metric_store.record(
+            platform=event.platform if event else None,
+            intent=command.intent.value if command else None,
+            status=response.status,
+            duration_ms=duration_ms,
+        )
+
+
+def _duration_ms(start: float) -> int:
+    return int((time.perf_counter() - start) * 1000)
