@@ -160,7 +160,7 @@ class HybridDocsSearchClient:
 
 
 def build_default_search_client() -> DocsSearchClient:
-    base = Path(__file__).resolve().parents[3]
+    base = _detect_search_root(Path(__file__).resolve())
     include_raw = os.getenv("DOC_SEARCH_PATHS", "README.md,docs,games,travel")
     include_paths = tuple(p.strip() for p in include_raw.split(",") if p.strip())
     if not include_paths:
@@ -229,6 +229,17 @@ def _candidate_files(*, root: Path, include_paths: tuple[str, ...]) -> list[Path
                 if child.is_file() and child.suffix.lower() in {".md", ".markdown"}:
                     files.append(child)
     return files
+
+
+def _detect_search_root(start: Path) -> Path:
+    env_root = os.getenv("DOC_SEARCH_ROOT", "").strip()
+    if env_root:
+        return Path(env_root).resolve()
+
+    for parent in start.parents:
+        if (parent / "README.md").exists() and (parent / "docs").exists():
+            return parent.resolve()
+    return start.parents[0].resolve()
 
 
 def _hashed_vector(tokens: list[str], dimension: int) -> list[float]:

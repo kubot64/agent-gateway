@@ -9,8 +9,12 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY src ./src
-COPY pyproject.toml ./pyproject.toml
+COPY backend/src ./src
+COPY backend/pyproject.toml ./pyproject.toml
+COPY README.md ./README.md
+COPY docs ./docs
+COPY games ./games
+COPY travel ./travel
 
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir \

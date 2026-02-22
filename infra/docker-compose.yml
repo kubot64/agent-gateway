@@ -3,8 +3,8 @@ version: "3.9"
 services:
   app:
     build:
-      context: ../backend
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: backend/Dockerfile
     container_name: home-agent-api
     restart: unless-stopped
     environment:
@@ -12,6 +12,7 @@ services:
       POSTGRES_DSN: postgresql://home:home@postgres:5432/home
       IDEMPOTENCY_BACKEND: redis
       REDIS_URL: redis://redis:6379/0
+      DOC_SEARCH_BACKEND: hybrid
     ports:
       - "8000:8000"
     depends_on:
