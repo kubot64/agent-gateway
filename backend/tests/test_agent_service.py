@@ -9,9 +9,10 @@ from datetime import datetime, timedelta, timezone
 from agent.llm import LocalFallbackLLMClient
 from agent.models import InboundEvent
 from agent.service import AgentService
-from api.inbound import handle_slack_command, handle_slack_event
+from api.inbound import handle_slack_command, handle_slack_event, handle_slack_interaction
 from api.security import verify_slack_signature
-from api.slack_payloads import normalize_slash_command
+from api.slack_payloads import extract_confirmation_from_interaction, normalize_slash_command, parse_interaction_payload
+from api.slack_responses import build_slack_response
 from infra.stores import SQLiteAuditLogStore, SQLiteDatabase, SQLiteReminderStore
 
 
@@ -116,6 +117,95 @@ class SlackPayloadTests(unittest.TestCase):
         )
         self.assertEqual(response["status"], "completed")
         self.assertEqual(response["response_type"], "ephemeral")
+        self.assertFalse("blocks" in response)
+
+    def test_parse_interaction_payload(self) -> None:
+        parsed = parse_interaction_payload(
+            {
+                "payload": json.dumps(
+                    {
+                        "actions": [
+                            {
+                                "action_id": "confirm",
+                                "value": "abc",
+                            }
+                        ]
+                    }
+                )
+            }
+        )
+        self.assertEqual(parsed["actions"][0]["value"], "abc")
+
+    def test_extract_confirmation_from_interaction(self) -> None:
+        confirmation = extract_confirmation_from_interaction(
+            {
+                "actions": [
+                    {
+                        "action_id": "cancel",
+                        "value": "xyz",
+                    }
+                ]
+            }
+        )
+        self.assertEqual(confirmation["confirmation_id"], "xyz")
+        self.assertEqual(confirmation["approved"], False)
+
+    def test_handle_slack_interaction_confirm(self) -> None:
+        pending = handle_slack_command(
+            {
+                "team_id": "T1",
+                "channel_id": "C1",
+                "user_id": "U1",
+                "command": "/remind",
+                "text": "2026-03-01T09:00 all hands",
+            }
+        )
+        confirmation_id = pending["metadata"]["confirmation_id"]
+        response = handle_slack_interaction(
+            {
+                "payload": json.dumps(
+                    {
+                        "actions": [
+                            {
+                                "action_id": "confirm",
+                                "value": confirmation_id,
+                            }
+                        ]
+                    }
+                )
+            }
+        )
+        self.assertEqual(response["status"], "completed")
+        self.assertEqual(response["response_type"], "ephemeral")
+        self.assertFalse("blocks" in response)
+
+    def test_handle_slash_command_needs_confirmation_has_blocks(self) -> None:
+        response = handle_slack_command(
+            {
+                "team_id": "T1",
+                "channel_id": "C1",
+                "user_id": "U1",
+                "command": "/remind",
+                "text": "2026-03-01T09:00 all members",
+            }
+        )
+        self.assertEqual(response["status"], "needs_confirmation")
+        self.assertTrue("blocks" in response)
+        blocks = response["blocks"]
+        self.assertEqual(blocks[1]["type"], "actions")
+        self.assertEqual(blocks[1]["elements"][0]["action_id"], "confirm")
+        self.assertEqual(blocks[1]["elements"][1]["action_id"], "cancel")
+        self.assertEqual(blocks[1]["elements"][0]["value"], response["metadata"]["confirmation_id"])
+
+    def test_build_slack_response_with_confirmation(self) -> None:
+        response = build_slack_response(
+            {
+                "status": "needs_confirmation",
+                "text": "確認が必要です",
+                "metadata": {"confirmation_id": "abc-123"},
+            }
+        )
+        self.assertEqual(response["blocks"][1]["elements"][0]["value"], "abc-123")
 
 
 class SQLiteStoreTests(unittest.TestCase):

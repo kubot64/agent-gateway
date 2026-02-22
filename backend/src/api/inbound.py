@@ -8,7 +8,12 @@ from datetime import datetime, timezone
 from agent.models import InboundEvent
 from agent.service import AgentService
 from api.security import SignatureVerificationError, verify_slack_signature
-from api.slack_payloads import normalize_slash_command
+from api.slack_payloads import (
+    extract_confirmation_from_interaction,
+    normalize_slash_command,
+    parse_interaction_payload,
+)
+from api.slack_responses import build_slack_response
 from infra.stores import SQLiteAuditLogStore, SQLiteDatabase, SQLiteReminderStore
 
 
@@ -74,18 +79,43 @@ def handle_slack_command(
     signing_secret: str | None = None,
 ) -> dict:
     normalized_payload = normalize_slash_command(form_payload)
-    response = handle_slack_event(
+    agent_response = handle_slack_event(
         normalized_payload,
         headers=headers,
         raw_body=raw_body,
         signing_secret=signing_secret,
     )
-    return {
-        "response_type": "ephemeral",
-        "text": response["text"],
-        "metadata": response["metadata"],
-        "status": response["status"],
-    }
+    return build_slack_response(agent_response)
+
+
+def handle_slack_interaction(
+    form_payload: Mapping[str, str],
+    *,
+    headers: Mapping[str, str] | None = None,
+    raw_body: bytes | None = None,
+    signing_secret: str | None = None,
+) -> dict:
+    if signing_secret:
+        body = raw_body
+        if body is None:
+            body = json.dumps(form_payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        try:
+            verify_slack_signature(signing_secret=signing_secret, raw_body=body, headers=headers or {})
+        except SignatureVerificationError:
+            return {"status": "unauthorized", "text": "署名検証に失敗しました。", "metadata": {}}
+
+    payload = parse_interaction_payload(form_payload)
+    confirmation = extract_confirmation_from_interaction(payload)
+    if not confirmation:
+        return build_slack_response(
+            {
+                "status": "unsupported",
+                "text": "未対応のインタラクションです。",
+                "metadata": {},
+            }
+        )
+    agent_response = handle_confirmation(confirmation)
+    return build_slack_response(agent_response)
 
 
 def _normalize_slack_event(payload: dict) -> InboundEvent:

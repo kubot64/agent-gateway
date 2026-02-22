@@ -66,6 +66,21 @@ async def inbound_slack_commands(request: Request) -> JSONResponse | PlainTextRe
     return JSONResponse(result, status_code=status_code)
 
 
+@app.post("/api/inbound/slack/interactions")
+async def inbound_slack_interactions(request: Request) -> JSONResponse:
+    raw_body = await request.body()
+    form = await request.form()
+    form_payload = {k: str(v) for k, v in form.items()}
+    result = inbound.handle_slack_interaction(
+        form_payload,
+        headers=request.headers,
+        raw_body=raw_body,
+        signing_secret=_signing_secret(),
+    )
+    status_code = 401 if result.get("status") == "unauthorized" else 200
+    return JSONResponse(result, status_code=status_code)
+
+
 @app.post("/api/agent/confirm-action")
 async def confirm_action(request: Request) -> JSONResponse:
     payload = await request.json()

@@ -257,3 +257,35 @@ docs/
 
 ---
 この設計をベースに、次は「使う技術スタック（TypeScript or Python）」を固定して、API契約とDBスキーマを実コード化する。
+
+## 13. 実装ステータス（2026-02-22）
+実装基準日: 2026-02-22
+
+### 実装済み
+- Slack署名検証（HMAC SHA256 / 5分許容）
+- Slack inbound API
+  - `POST /api/inbound/slack/events`
+  - `POST /api/inbound/slack/commands`
+  - `POST /api/inbound/slack/interactions`
+- Agent API
+  - `POST /api/agent/confirm-action`
+  - `GET /api/health`
+  - `GET /api/metrics`
+- `/ask` のLLM接続（OpenAI + ローカルフォールバック）
+- `reminder.create` 永続化（SQLite）
+- Confirm/Cancel TTL（5分）
+- 監査ログ保存（SQLite `audit_logs`）
+- Confirm/Cancel Block Kit
+  - `action_id=confirm|cancel`
+  - `value=confirmation_id`
+
+### 未実装
+- Discord inbound
+- `task add` 実行（Notion/Linear連携）
+- RAG検索
+- 本番向け可観測性（トレース/メトリクス外部連携）
+- PostgreSQL / Redis への移行
+
+### 実装との差分メモ
+- 設計上は PostgreSQL + Redis を想定しているが、現実装は SQLite 単体。
+- `POST /api/agent/handle-message` は未公開。現状は Slack inbound 経由で処理。
