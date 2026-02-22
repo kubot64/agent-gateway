@@ -9,6 +9,7 @@ from uuid import uuid4
 from .llm import LLMClient, build_default_llm_client
 from .models import AgentResponse, Command, InboundEvent, Intent, PendingConfirmation, Reminder
 from .parser import CommandParser
+from .task import TaskClient, TaskClientError, build_default_task_client
 
 
 class ReminderStore(Protocol):
@@ -76,6 +77,7 @@ class AgentService:
         reminder_store: ReminderStore | None = None,
         audit_store: AuditLogStore | None = None,
         llm_client: LLMClient | None = None,
+        task_client: TaskClient | None = None,
         confirmation_ttl: timedelta = timedelta(minutes=5),
         now_provider: Callable[[], datetime] | None = None,
     ) -> None:
@@ -83,6 +85,7 @@ class AgentService:
         self.reminder_store = reminder_store or InMemoryReminderStore()
         self.audit_store = audit_store or InMemoryAuditLogStore()
         self.llm_client = llm_client or build_default_llm_client()
+        self.task_client = task_client or build_default_task_client()
         self.pending_confirmations: dict[str, PendingConfirmation] = {}
         self.confirmation_ttl = confirmation_ttl
         self.now_provider = now_provider or (lambda: datetime.now(timezone.utc))
@@ -107,8 +110,13 @@ class AgentService:
             self._log(action="handle_message", event=event, command=command, response=response)
             return response
 
+        if command.intent is Intent.TASK:
+            response = self._handle_task(event, command)
+            self._log(action="handle_message", event=event, command=command, response=response)
+            return response
+
         response = AgentResponse(
-            text="コマンドを解釈できませんでした。`/ask` `/summarize` `/remind` を使用してください。",
+            text="コマンドを解釈できませんでした。`/ask` `/summarize` `/remind` `/task` を使用してください。",
             status="unsupported",
         )
         self._log(action="handle_message", event=event, command=command, response=response)
@@ -193,6 +201,47 @@ class AgentService:
             text=f"リマインドを登録しました: {reminder.reminder_id}",
             status="completed",
             metadata={"reminder_id": reminder.reminder_id},
+        )
+
+    def _handle_task(self, event: InboundEvent, command: Command) -> AgentResponse:
+        action = str(command.payload.get("action", "")).lower()
+        if action != "add":
+            return AgentResponse(
+                text="形式が不正です。例: /task add バグ調査",
+                status="validation_error",
+            )
+
+        title = str(command.payload.get("title", "")).strip()
+        if not title:
+            return AgentResponse(
+                text="タスク内容が空です。例: /task add バグ調査",
+                status="validation_error",
+            )
+
+        try:
+            result = self.task_client.create_task(
+                title=title,
+                description=f"Created by {event.platform}:{event.user_id}",
+                creator_id=event.user_id,
+            )
+        except TaskClientError as exc:
+            return AgentResponse(
+                text=f"タスク登録に失敗しました: {exc}",
+                status="integration_error",
+            )
+
+        task_id = str(result.get("task_id", "")).strip() or "unknown"
+        metadata = {
+            "provider": str(result.get("provider", "unknown")),
+            "task_id": task_id,
+        }
+        url = str(result.get("url", "")).strip()
+        if url:
+            metadata["url"] = url
+        return AgentResponse(
+            text=f"タスクを登録しました: {task_id}",
+            status="completed",
+            metadata=metadata,
         )
 
     def _log(

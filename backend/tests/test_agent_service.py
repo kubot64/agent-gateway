@@ -6,11 +6,13 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
+from uuid import uuid4
 
 from adapters.slack.web_api import SlackAPIError, SlackWebAPIClient
 from agent.llm import LocalFallbackLLMClient
 from agent.models import InboundEvent
 from agent.service import AgentService
+from agent.task import TaskClientError
 from api.discord_payloads import normalize_discord_interaction
 from api.discord_security import DiscordSignatureVerificationError, verify_discord_signature
 from api.inbound import handle_discord_interaction, handle_slack_command, handle_slack_event, handle_slack_interaction
@@ -34,6 +36,19 @@ def build_event(text: str) -> InboundEvent:
 
 
 class AgentServiceTests(unittest.TestCase):
+    class FakeTaskClient:
+        def __init__(self, should_fail: bool = False) -> None:
+            self.should_fail = should_fail
+
+        def create_task(self, *, title: str, description: str | None = None, creator_id: str | None = None) -> dict[str, str]:
+            if self.should_fail:
+                raise TaskClientError("failed")
+            return {
+                "provider": "linear",
+                "task_id": "ENG-123",
+                "url": "https://linear.app/example/issue/ENG-123",
+            }
+
     def test_ask_command_uses_llm(self) -> None:
         service = AgentService(llm_client=LocalFallbackLLMClient())
         response = service.handle_message(build_event("/ask 今日の予定は？"))
@@ -66,6 +81,23 @@ class AgentServiceTests(unittest.TestCase):
         current_time = current_time + timedelta(seconds=3)
         expired = service.confirm_action(confirmation_id, True)
         self.assertEqual(expired.status, "expired")
+
+    def test_task_add_creates_task(self) -> None:
+        service = AgentService(task_client=self.FakeTaskClient())
+        response = service.handle_message(build_event("/task add APIの不具合を調査"))
+        self.assertEqual(response.status, "completed")
+        self.assertEqual(response.metadata["provider"], "linear")
+        self.assertEqual(response.metadata["task_id"], "ENG-123")
+
+    def test_task_add_validation_error(self) -> None:
+        service = AgentService(task_client=self.FakeTaskClient())
+        response = service.handle_message(build_event("/task add"))
+        self.assertEqual(response.status, "validation_error")
+
+    def test_task_add_integration_error(self) -> None:
+        service = AgentService(task_client=self.FakeTaskClient(should_fail=True))
+        response = service.handle_message(build_event("/task add APIの不具合を調査"))
+        self.assertEqual(response.status, "integration_error")
 
 
 class SecurityTests(unittest.TestCase):
@@ -122,8 +154,9 @@ class SecurityTests(unittest.TestCase):
             )
 
     def test_handle_slack_event_duplicate_is_skipped(self) -> None:
+        event_id = f"evt-dup-{uuid4()}"
         payload = {
-            "event_id": "evt-dup-1",
+            "event_id": event_id,
             "team_id": "T1",
             "event": {
                 "ts": "1700000000",
@@ -344,10 +377,11 @@ class DiscordInboundTests(unittest.TestCase):
         self.assertEqual(response["type"], 1)
 
     def test_handle_discord_interaction_remind(self) -> None:
+        interaction_id = f"i-{uuid4()}"
         response = handle_discord_interaction(
             {
                 "type": 2,
-                "id": "i2",
+                "id": interaction_id,
                 "guild_id": "G1",
                 "channel_id": "D1",
                 "member": {"user": {"id": "U1"}},
@@ -379,9 +413,10 @@ class DiscordInboundTests(unittest.TestCase):
         self.assertEqual(response["status"], "unauthorized")
 
     def test_handle_discord_duplicate_is_skipped(self) -> None:
+        interaction_id = f"discord-dup-{uuid4()}"
         payload = {
             "type": 2,
-            "id": "discord-dup-1",
+            "id": interaction_id,
             "guild_id": "G1",
             "channel_id": "D1",
             "member": {"user": {"id": "U1"}},

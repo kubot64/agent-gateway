@@ -10,6 +10,7 @@ class Intent(str, Enum):
     ASK = "ask"
     SUMMARIZE = "summarize"
     REMIND = "remind"
+    TASK = "task"
     UNKNOWN = "unknown"
 
 

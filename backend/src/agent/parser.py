@@ -25,6 +25,9 @@ class CommandParser:
         if lowered.startswith("/remind"):
             return self._parse_remind_payload(cleaned[len("/remind") :].strip())
 
+        if lowered.startswith("/task"):
+            return self._parse_task_payload(cleaned[len("/task") :].strip())
+
         # very small natural language rule for kickoff implementation
         if "リマインド" in cleaned and "明日" in cleaned:
             remind_at = datetime.now(timezone.utc) + timedelta(days=1)
@@ -61,3 +64,19 @@ class CommandParser:
             payload={"remind_at": remind_at, "message": message},
             requires_confirmation=requires_confirmation,
         )
+
+    def _parse_task_payload(self, payload: str) -> Command:
+        """
+        Supported format for MVP:
+        /task add task title...
+        """
+        cleaned = payload.strip()
+        if not cleaned:
+            return Command(intent=Intent.TASK, payload={})
+
+        lowered = cleaned.lower()
+        if lowered.startswith("add "):
+            title = cleaned[4:].strip()
+            return Command(intent=Intent.TASK, payload={"action": "add", "title": title})
+
+        return Command(intent=Intent.TASK, payload={"raw": cleaned})

@@ -279,6 +279,7 @@ docs/
   - `GET /api/health`
   - `GET /api/metrics`
 - `/ask` のLLM接続（OpenAI + ローカルフォールバック）
+- `/task add` のLinear連携（`LINEAR_API_KEY`, `LINEAR_TEAM_ID`）
 - `reminder.create` 永続化（SQLite）
 - Confirm/Cancel TTL（5分）
 - 監査ログ保存（SQLite `audit_logs`）
@@ -287,7 +288,6 @@ docs/
   - `value=confirmation_id`
 
 ### 未実装
-- `task add` 実行（Notion/Linear連携）
 - RAG検索
 - 本番向け可観測性（トレース/メトリクス外部連携）
 - PostgreSQL / Redis への移行

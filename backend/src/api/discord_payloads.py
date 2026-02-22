@@ -57,4 +57,8 @@ def _build_command_text(*, command_name: str, options: Mapping[str, str]) -> str
         when = options.get("datetime", "")
         message = options.get("message", "")
         return f"/remind {when} {message}".strip()
+    if command_name == "task":
+        action = options.get("action", "add")
+        title = options.get("title", "")
+        return f"/task {action} {title}".strip()
     return str(options.get("text", "")).strip()
