@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, ContextManager
 from uuid import uuid4
 
-from agent.models import Reminder
+from agent.models import ConversationMessage, Reminder
 
 
 class SQLiteDatabase:
@@ -70,6 +70,21 @@ class SQLiteDatabase:
                     intent TEXT,
                     status TEXT NOT NULL,
                     duration_ms INTEGER NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS conversation_messages (
+                    message_pk INTEGER PRIMARY KEY AUTOINCREMENT,
+                    platform TEXT NOT NULL,
+                    workspace_id TEXT NOT NULL,
+                    channel_id TEXT NOT NULL,
+                    thread_id TEXT,
+                    user_id TEXT NOT NULL,
+                    message_id TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    ts TEXT NOT NULL
                 )
                 """
             )
@@ -142,6 +157,21 @@ class PostgresDatabase:
                     intent TEXT,
                     status TEXT NOT NULL,
                     duration_ms INTEGER NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS conversation_messages (
+                    message_pk BIGSERIAL PRIMARY KEY,
+                    platform TEXT NOT NULL,
+                    workspace_id TEXT NOT NULL,
+                    channel_id TEXT NOT NULL,
+                    thread_id TEXT,
+                    user_id TEXT NOT NULL,
+                    message_id TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    ts TIMESTAMPTZ NOT NULL
                 )
                 """
             )
@@ -265,6 +295,9 @@ class SQLiteIdempotencyStore:
         except sqlite3.IntegrityError:
             return False
 
+    def health_check(self) -> bool:
+        return self.database.health_check()
+
 
 class SQLiteCommandMetricStore:
     def __init__(self, database: SQLiteDatabase) -> None:
@@ -335,6 +368,78 @@ class SQLiteCommandMetricStore:
             "by_intent": {str(row[0]): int(row[1]) for row in by_intent_rows},
             "by_status": {str(row[0]): int(row[1]) for row in by_status_rows},
         }
+
+
+class SQLiteConversationStore:
+    def __init__(self, database: SQLiteDatabase) -> None:
+        self.database = database
+
+    def append(self, message: ConversationMessage) -> None:
+        with self.database.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO conversation_messages (
+                    platform, workspace_id, channel_id, thread_id, user_id, message_id, text, ts
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    message.platform,
+                    message.workspace_id,
+                    message.channel_id,
+                    message.thread_id,
+                    message.user_id,
+                    message.message_id,
+                    message.text,
+                    message.ts.astimezone(timezone.utc).isoformat(),
+                ),
+            )
+
+    def recent(
+        self,
+        *,
+        platform: str,
+        workspace_id: str,
+        channel_id: str,
+        thread_id: str | None,
+        limit: int = 20,
+    ) -> list[ConversationMessage]:
+        with self.database.connect() as conn:
+            if thread_id is None:
+                rows = conn.execute(
+                    """
+                    SELECT platform, workspace_id, channel_id, thread_id, user_id, message_id, text, ts
+                    FROM conversation_messages
+                    WHERE platform = ? AND workspace_id = ? AND channel_id = ?
+                    ORDER BY ts DESC
+                    LIMIT ?
+                    """,
+                    (platform, workspace_id, channel_id, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT platform, workspace_id, channel_id, thread_id, user_id, message_id, text, ts
+                    FROM conversation_messages
+                    WHERE platform = ? AND workspace_id = ? AND channel_id = ? AND thread_id = ?
+                    ORDER BY ts DESC
+                    LIMIT ?
+                    """,
+                    (platform, workspace_id, channel_id, thread_id, limit),
+                ).fetchall()
+        rows = list(reversed(rows))
+        return [
+            ConversationMessage(
+                platform=str(r[0]),
+                workspace_id=str(r[1]),
+                channel_id=str(r[2]),
+                thread_id=str(r[3]) if r[3] is not None else None,
+                user_id=str(r[4]),
+                message_id=str(r[5]),
+                text=str(r[6]),
+                ts=datetime.fromisoformat(str(r[7])),
+            )
+            for r in rows
+        ]
 
 
 class PostgresReminderStore:
@@ -440,6 +545,9 @@ class PostgresIdempotencyStore:
             )
             return int(cursor.rowcount) > 0
 
+    def health_check(self) -> bool:
+        return self.database.health_check()
+
 
 class PostgresCommandMetricStore:
     def __init__(self, database: PostgresDatabase) -> None:
@@ -506,6 +614,78 @@ class PostgresCommandMetricStore:
         }
 
 
+class PostgresConversationStore:
+    def __init__(self, database: PostgresDatabase) -> None:
+        self.database = database
+
+    def append(self, message: ConversationMessage) -> None:
+        with self.database.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO conversation_messages (
+                    platform, workspace_id, channel_id, thread_id, user_id, message_id, text, ts
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    message.platform,
+                    message.workspace_id,
+                    message.channel_id,
+                    message.thread_id,
+                    message.user_id,
+                    message.message_id,
+                    message.text,
+                    message.ts.astimezone(timezone.utc),
+                ),
+            )
+
+    def recent(
+        self,
+        *,
+        platform: str,
+        workspace_id: str,
+        channel_id: str,
+        thread_id: str | None,
+        limit: int = 20,
+    ) -> list[ConversationMessage]:
+        with self.database.connect() as conn:
+            if thread_id is None:
+                rows = conn.execute(
+                    """
+                    SELECT platform, workspace_id, channel_id, thread_id, user_id, message_id, text, ts
+                    FROM conversation_messages
+                    WHERE platform = %s AND workspace_id = %s AND channel_id = %s
+                    ORDER BY ts DESC
+                    LIMIT %s
+                    """,
+                    (platform, workspace_id, channel_id, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT platform, workspace_id, channel_id, thread_id, user_id, message_id, text, ts
+                    FROM conversation_messages
+                    WHERE platform = %s AND workspace_id = %s AND channel_id = %s AND thread_id = %s
+                    ORDER BY ts DESC
+                    LIMIT %s
+                    """,
+                    (platform, workspace_id, channel_id, thread_id, limit),
+                ).fetchall()
+        rows = list(reversed(rows))
+        return [
+            ConversationMessage(
+                platform=str(r[0]),
+                workspace_id=str(r[1]),
+                channel_id=str(r[2]),
+                thread_id=str(r[3]) if r[3] is not None else None,
+                user_id=str(r[4]),
+                message_id=str(r[5]),
+                text=str(r[6]),
+                ts=r[7],
+            )
+            for r in rows
+        ]
+
+
 class RedisIdempotencyStore:
     def __init__(self, *, redis_url: str, prefix: str = "agent:idempotency:", ttl_seconds: int = 24 * 60 * 60) -> None:
         self.redis_url = redis_url
@@ -518,6 +698,12 @@ class RedisIdempotencyStore:
         result = self.client.set(key, "1", ex=self.ttl_seconds, nx=True)
         return bool(result)
 
+    def health_check(self) -> bool:
+        try:
+            return bool(self.client.ping())
+        except Exception:
+            return False
+
 
 class CompositeIdempotencyStore:
     def __init__(self, *, primary: Any, fallback: Any) -> None:
@@ -529,6 +715,13 @@ class CompositeIdempotencyStore:
             return bool(self.primary.mark_processed(idempotency_key))
         except Exception:
             return bool(self.fallback.mark_processed(idempotency_key))
+
+    def health_check(self) -> bool:
+        primary_check = getattr(self.primary, "health_check", None)
+        fallback_check = getattr(self.fallback, "health_check", None)
+        primary_ok = bool(primary_check()) if callable(primary_check) else True
+        fallback_ok = bool(fallback_check()) if callable(fallback_check) else True
+        return primary_ok and fallback_ok
 
 
 def _psycopg_connect(dsn: str) -> Any:

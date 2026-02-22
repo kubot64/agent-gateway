@@ -45,6 +45,18 @@ class Reminder:
 
 
 @dataclass
+class ConversationMessage:
+    platform: str
+    workspace_id: str
+    channel_id: str
+    thread_id: str | None
+    user_id: str
+    message_id: str
+    text: str
+    ts: datetime
+
+
+@dataclass
 class AgentResponse:
     text: str
     status: str

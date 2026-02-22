@@ -9,9 +9,11 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 from adapters.slack.web_api import SlackAPIError, SlackWebAPIClient
 from api import inbound
+from api.observability import configure_logging, log_http_request
 from api.slack_payloads import extract_challenge, is_url_verification
 
 app = FastAPI(title="home-secretary-backend", version="0.1.0")
+configure_logging()
 
 
 @app.middleware("http")
@@ -21,6 +23,11 @@ async def attach_request_id(request: Request, call_next: Any) -> Any:
     response = await call_next(request)
     response.headers["x-request-id"] = request_id
     return response
+
+
+@app.middleware("http")
+async def access_log(request: Request, call_next: Any) -> Any:
+    return await log_http_request(request, call_next)
 
 
 def _signing_secret() -> str | None:
@@ -71,7 +78,14 @@ def _try_post_reply(payload: dict, text: str) -> None:
 @app.get("/api/health")
 async def health() -> dict[str, str]:
     db_ok = inbound.database.health_check()
-    return {"status": "ok" if db_ok else "degraded", "database": "ok" if db_ok else "error"}
+    idem_check = getattr(inbound.idempotency_store, "health_check", None)
+    idem_ok = bool(idem_check()) if callable(idem_check) else True
+    overall_ok = db_ok and idem_ok
+    return {
+        "status": "ok" if overall_ok else "degraded",
+        "database": "ok" if db_ok else "error",
+        "idempotency": "ok" if idem_ok else "error",
+    }
 
 
 @app.get("/api/metrics")

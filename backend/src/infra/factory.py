@@ -10,12 +10,14 @@ from infra.stores import (
     CompositeIdempotencyStore,
     PostgresAuditLogStore,
     PostgresCommandMetricStore,
+    PostgresConversationStore,
     PostgresDatabase,
     PostgresIdempotencyStore,
     PostgresReminderStore,
     RedisIdempotencyStore,
     SQLiteAuditLogStore,
     SQLiteCommandMetricStore,
+    SQLiteConversationStore,
     SQLiteDatabase,
     SQLiteIdempotencyStore,
     SQLiteReminderStore,
@@ -40,6 +42,7 @@ def build_infra(*, default_sqlite_path: str) -> AppInfra:
             reminder_store=PostgresReminderStore(database),
             audit_store=PostgresAuditLogStore(database),
             metric_store=PostgresCommandMetricStore(database),
+            conversation_store=PostgresConversationStore(database),
         )
         db_idempotency_store = PostgresIdempotencyStore(database)
     else:
@@ -48,6 +51,7 @@ def build_infra(*, default_sqlite_path: str) -> AppInfra:
             reminder_store=SQLiteReminderStore(database),
             audit_store=SQLiteAuditLogStore(database),
             metric_store=SQLiteCommandMetricStore(database),
+            conversation_store=SQLiteConversationStore(database),
         )
         db_idempotency_store = SQLiteIdempotencyStore(database)
 

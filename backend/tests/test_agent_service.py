@@ -21,7 +21,7 @@ from api.inbound import handle_agent_message, handle_discord_interaction, handle
 from api.security import verify_slack_signature
 from api.slack_payloads import extract_confirmation_from_interaction, normalize_slash_command, parse_interaction_payload
 from api.slack_responses import build_slack_response
-from infra.stores import SQLiteAuditLogStore, SQLiteCommandMetricStore, SQLiteDatabase, SQLiteReminderStore
+from infra.stores import SQLiteAuditLogStore, SQLiteCommandMetricStore, SQLiteDatabase, SQLiteIdempotencyStore, SQLiteReminderStore
 from infra.factory import build_infra
 
 
@@ -39,6 +39,10 @@ def build_event(text: str) -> InboundEvent:
 
 
 class AgentServiceTests(unittest.TestCase):
+    class FakeLLMClient:
+        def answer(self, question: str) -> str:
+            return f"SUMMARY::{question[:40]}"
+
     class FakeTaskClient:
         def __init__(self, should_fail: bool = False) -> None:
             self.should_fail = should_fail
@@ -70,6 +74,20 @@ class AgentServiceTests(unittest.TestCase):
         response = service.handle_message(build_event("/remind 2026-03-01T09:00 資料提出"))
         self.assertEqual(response.status, "completed")
         self.assertIn("reminder_id", response.metadata)
+
+    def test_summarize_with_conversation_messages(self) -> None:
+        service = AgentService(llm_client=self.FakeLLMClient())
+        service.handle_message(build_event("昨日の進捗はAを完了"))
+        response = service.handle_message(build_event("/summarize current_thread"))
+        self.assertEqual(response.status, "completed")
+        self.assertGreaterEqual(int(response.metadata.get("message_count", 0)), 1)
+        self.assertTrue(response.text.startswith("SUMMARY::"))
+
+    def test_summarize_without_messages(self) -> None:
+        service = AgentService(llm_client=self.FakeLLMClient())
+        response = service.handle_message(build_event("/summarize current_thread"))
+        self.assertEqual(response.status, "not_found")
+        self.assertEqual(response.metadata.get("message_count"), 0)
 
     def test_remind_all_requires_confirmation(self) -> None:
         service = AgentService()
@@ -391,6 +409,7 @@ class SQLiteStoreTests(unittest.TestCase):
             self.assertEqual(summary["by_status"]["completed"], 1)
             self.assertEqual(summary["by_status"]["integration_error"], 1)
             self.assertEqual(database.health_check(), True)
+            self.assertEqual(SQLiteIdempotencyStore(database).health_check(), True)
 
 
 class SearchClientTests(unittest.TestCase):

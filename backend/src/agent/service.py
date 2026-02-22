@@ -8,7 +8,7 @@ from typing import Callable, Protocol
 from uuid import uuid4
 
 from .llm import LLMClient, build_default_llm_client
-from .models import AgentResponse, Command, InboundEvent, Intent, PendingConfirmation, Reminder
+from .models import AgentResponse, Command, ConversationMessage, InboundEvent, Intent, PendingConfirmation, Reminder
 from .parser import CommandParser
 from .search import DocsSearchClient, SearchResult, build_default_search_client
 from .task import TaskClient, TaskClientError, build_default_task_client
@@ -32,6 +32,22 @@ class MetricStore(Protocol):
         ...
 
     def summary(self) -> dict[str, object]:
+        ...
+
+
+class ConversationStore(Protocol):
+    def append(self, message: ConversationMessage) -> None:
+        ...
+
+    def recent(
+        self,
+        *,
+        platform: str,
+        workspace_id: str,
+        channel_id: str,
+        thread_id: str | None,
+        limit: int = 20,
+    ) -> list[ConversationMessage]:
         ...
 
 
@@ -129,6 +145,33 @@ class InMemoryMetricStore:
         }
 
 
+class InMemoryConversationStore:
+    def __init__(self) -> None:
+        self._messages: list[ConversationMessage] = []
+
+    def append(self, message: ConversationMessage) -> None:
+        self._messages.append(message)
+
+    def recent(
+        self,
+        *,
+        platform: str,
+        workspace_id: str,
+        channel_id: str,
+        thread_id: str | None,
+        limit: int = 20,
+    ) -> list[ConversationMessage]:
+        filtered = [
+            m
+            for m in self._messages
+            if m.platform == platform and m.workspace_id == workspace_id and m.channel_id == channel_id
+        ]
+        if thread_id is not None:
+            filtered = [m for m in filtered if m.thread_id == thread_id]
+        filtered.sort(key=lambda x: x.ts)
+        return filtered[-limit:]
+
+
 class AgentService:
     def __init__(
         self,
@@ -136,6 +179,7 @@ class AgentService:
         reminder_store: ReminderStore | None = None,
         audit_store: AuditLogStore | None = None,
         metric_store: MetricStore | None = None,
+        conversation_store: ConversationStore | None = None,
         llm_client: LLMClient | None = None,
         search_client: DocsSearchClient | None = None,
         task_client: TaskClient | None = None,
@@ -146,6 +190,7 @@ class AgentService:
         self.reminder_store = reminder_store or InMemoryReminderStore()
         self.audit_store = audit_store or InMemoryAuditLogStore()
         self.metric_store = metric_store or InMemoryMetricStore()
+        self.conversation_store = conversation_store or InMemoryConversationStore()
         self.llm_client = llm_client or build_default_llm_client()
         self.search_client = search_client or build_default_search_client()
         self.task_client = task_client or build_default_task_client()
@@ -156,6 +201,7 @@ class AgentService:
     def handle_message(self, event: InboundEvent, *, request_id: str | None = None) -> AgentResponse:
         start = time.perf_counter()
         command = self.parser.parse(event.text)
+        self._store_conversation(event, command)
 
         if command.intent is Intent.ASK:
             question = command.payload.get("question") or "質問が空です。"
@@ -171,7 +217,7 @@ class AgentService:
             return response
 
         if command.intent is Intent.SUMMARIZE:
-            response = AgentResponse(text="要約ジョブを開始しました。", status="queued")
+            response = self._handle_summarize(event, command)
             self._log(action="handle_message", event=event, command=command, response=response, request_id=request_id)
             self._record_metric(event=event, command=command, response=response, duration_ms=_duration_ms(start))
             return response
@@ -367,6 +413,33 @@ class AgentService:
             metadata=metadata,
         )
 
+    def _handle_summarize(self, event: InboundEvent, command: Command) -> AgentResponse:
+        target = str(command.payload.get("target", "current_thread"))
+        use_thread = target == "current_thread"
+        messages = self.conversation_store.recent(
+            platform=event.platform,
+            workspace_id=event.workspace_id,
+            channel_id=event.channel_id,
+            thread_id=event.thread_id if use_thread else None,
+            limit=30,
+        )
+        if not messages:
+            return AgentResponse(
+                text="要約対象メッセージが見つかりませんでした。",
+                status="not_found",
+                metadata={"message_count": 0},
+            )
+
+        prompt_lines = ["以下を日本語で3行程度に要約してください。"]
+        for idx, message in enumerate(messages, start=1):
+            prompt_lines.append(f"{idx}. {message.user_id}: {message.text}")
+        summary = self.llm_client.answer("\n".join(prompt_lines))
+        return AgentResponse(
+            text=summary,
+            status="completed",
+            metadata={"message_count": len(messages)},
+        )
+
     def _log(
         self,
         *,
@@ -406,6 +479,24 @@ class AgentService:
             intent=command.intent.value if command else None,
             status=response.status,
             duration_ms=duration_ms,
+        )
+
+    def _store_conversation(self, event: InboundEvent, command: Command) -> None:
+        if command.intent is Intent.SUMMARIZE:
+            return
+        if not event.text.strip():
+            return
+        self.conversation_store.append(
+            ConversationMessage(
+                platform=event.platform,
+                workspace_id=event.workspace_id,
+                channel_id=event.channel_id,
+                thread_id=event.thread_id,
+                user_id=event.user_id,
+                message_id=event.message_id,
+                text=event.text,
+                ts=event.ts,
+            )
         )
 
 
