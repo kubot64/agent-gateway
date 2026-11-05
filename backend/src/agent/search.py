@@ -161,7 +161,7 @@ class HybridDocsSearchClient:
 
 def build_default_search_client() -> DocsSearchClient:
     base = _detect_search_root(Path(__file__).resolve())
-    include_raw = os.getenv("DOC_SEARCH_PATHS", "README.md,docs,games,travel")
+    include_raw = os.getenv("DOC_SEARCH_PATHS", "README.md,docs")
     include_paths = tuple(p.strip() for p in include_raw.split(",") if p.strip())
     if not include_paths:
         return NullDocsSearchClient()

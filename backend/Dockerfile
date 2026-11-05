@@ -13,8 +13,6 @@ COPY backend/src ./src
 COPY backend/pyproject.toml ./pyproject.toml
 COPY README.md ./README.md
 COPY docs ./docs
-COPY games ./games
-COPY travel ./travel
 
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir \
