@@ -10,7 +10,6 @@ from fastapi.responses import JSONResponse
 from gateway.slack_web_api import SlackAPIError, SlackWebAPIClient
 from gateway import inbound
 from gateway.observability import configure_logging, log_http_request
-from gateway.slack_payloads import extract_challenge, is_url_verification
 
 app = FastAPI(title="home-secretary-backend", version="0.1.0")
 configure_logging()
@@ -43,6 +42,11 @@ def _bot_token() -> str | None:
 def _discord_public_key() -> str | None:
     key = os.getenv("DISCORD_PUBLIC_KEY", "").strip()
     return key or None
+
+
+def _direct_handle_message_enabled() -> bool:
+    value = os.getenv("ENABLE_DIRECT_HANDLE_MESSAGE", "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
 
 
 def _extract_reply_target(payload: dict) -> tuple[str, str | None] | None:
@@ -109,9 +113,6 @@ async def inbound_slack_events(request: Request) -> JSONResponse:
     raw_body = await request.body()
     payload = await request.json()
 
-    if is_url_verification(payload):
-        return JSONResponse({"challenge": extract_challenge(payload)})
-
     result = inbound.handle_slack_event(
         payload,
         headers=request.headers,
@@ -121,6 +122,8 @@ async def inbound_slack_events(request: Request) -> JSONResponse:
     )
     if result.get("status") == "unauthorized":
         return JSONResponse(result, status_code=401, headers={"x-request-id": request_id})
+    if result.get("status") == "url_verification":
+        return JSONResponse({"challenge": result.get("challenge", "")}, headers={"x-request-id": request_id})
 
     if result.get("status") != "duplicate":
         _try_post_reply(payload, str(result.get("text", "")))
@@ -182,16 +185,12 @@ async def inbound_discord_interactions(request: Request) -> JSONResponse:
     return JSONResponse(result, headers={"x-request-id": request_id})
 
 
-@app.post("/api/agent/confirm-action")
-async def confirm_action(request: Request) -> JSONResponse:
-    request_id = str(getattr(request.state, "request_id", ""))
-    payload = await request.json()
-    result = inbound.handle_confirmation(payload, request_id=request_id)
-    return JSONResponse(result, headers={"x-request-id": request_id})
-
-
 @app.post("/api/agent/handle-message")
 async def handle_message(request: Request) -> JSONResponse:
+    # 依頼者を名乗るだけで依頼できる入口なので、ローカル開発で明示的に有効にしたときだけ開ける。
+    # 無効なときはルートが存在しないのと同じ 404 を返す。
+    if not _direct_handle_message_enabled():
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
     request_id = str(getattr(request.state, "request_id", ""))
     payload = await request.json()
     result = inbound.handle_agent_message(payload, request_id=request_id)

@@ -47,6 +47,8 @@ DOC_SEARCH_BACKEND=keyword \
 infra/cloudrun/deploy.sh
 ```
 
+`ENABLE_DIRECT_HANDLE_MESSAGE` は Cloud Run に設定しない。設定しなければ、署名検証のない開発用の直接入口 `/api/agent/handle-message` は 404 を返す。
+
 デプロイ後に以下URLが出力される。
 - Slack Events: `.../api/inbound/slack/events`
 - Slack Commands: `.../api/inbound/slack/commands`

@@ -60,10 +60,41 @@ cd backend && mypy
 cd backend && PYTHONPATH=src uvicorn gateway.main:app --host 0.0.0.0 --port 8000
 ```
 
+### 署名鍵
+
+Slack と Discord の入口は、署名鍵が設定されていないと 401 を返す。鍵がないまま署名検証を飛ばすと、誰でも依頼者を名乗ったり承認したりできるからだ。
+
+| 環境変数 | 必要な入口 |
+|---|---|
+| `SLACK_SIGNING_SECRET` | `/api/inbound/slack/events`、`/api/inbound/slack/commands`、`/api/inbound/slack/interactions` |
+| `DISCORD_PUBLIC_KEY` | `/api/inbound/discord/interactions` |
+
+ローカルで Slack の入口を叩くときも、鍵を設定し、その鍵で署名したリクエストを送る。署名の作り方は `backend/scripts/e2e_pg_redis.sh` の `post_slack_signed` を参照。
+
+### 直接入口 `/api/agent/handle-message`
+
+`POST /api/agent/handle-message` は、Slack / Discord を通さずに依頼を送る開発用の入口だ。署名検証がなく、本文の `user_id` で誰にでもなりすませる。そのため既定では無効で、404 を返す。
+
+ローカル開発で使うときだけ、環境変数 `ENABLE_DIRECT_HANDLE_MESSAGE=1` を立てて起動する（`true`、`yes`、`on` も有効とみなす）。本番には設定しない。
+
+```bash
+cd backend && ENABLE_DIRECT_HANDLE_MESSAGE=1 PYTHONPATH=src uvicorn gateway.main:app --host 127.0.0.1 --port 8000
+```
+
+```bash
+curl -sS -X POST http://127.0.0.1:8000/api/agent/handle-message \
+  -H "content-type: application/json" \
+  -d '{"platform":"api","workspace_id":"W1","channel_id":"C1","user_id":"U1","text":"/ask こんにちは"}'
+```
+
+承認は署名検証済みの Slack interaction（`POST /api/inbound/slack/interactions`）からだけ受け付ける。以前あった認証なしの `POST /api/agent/confirm-action` は廃止した（ADR-0003）。
+
 ## run with postgres + redis
 
 ```bash
 cd infra && docker compose --profile app up -d --build
 ```
+
+docker compose でも直接入口は既定で無効で、署名鍵も入っていない。使うときは `ENABLE_DIRECT_HANDLE_MESSAGE=1 SLACK_SIGNING_SECRET=... docker compose --profile app up -d --build` のように実行環境から渡す。E2E（`backend/scripts/e2e_pg_redis.sh`）は、E2E 専用の `infra/docker-compose.e2e.yml` を別のプロジェクト名（`agent-gateway-e2e`）で動かす。公開ポートは app 18000、postgres 15432、redis 16379 で、データも分かれているので、手元で動かしている構成には触れない。直接入口を開けたテスト用アプリは終了時に必ず消す。`E2E_CLEANUP=1` なら、E2E 用の postgres と redis もデータごと消す。
 
 本格的な README（解決する問題、構成図、4 つの安全、ADR）は 2026-11 中に書き換えます。
