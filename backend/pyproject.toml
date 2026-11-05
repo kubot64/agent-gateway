@@ -1,8 +1,12 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "home-secretary-backend"
+name = "agent-gateway"
 version = "0.1.0"
-description = "MVP backend for Slack/Discord secretary agent"
-requires-python = ">=3.9"
+description = "Safely bridge LLM agents to Slack / Discord"
+requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.110.0",
   "uvicorn>=0.27.0",
@@ -16,7 +20,26 @@ dependencies = [
 dev = [
   "pytest>=8.0.0",
   "import-linter>=2.0",
+  "ruff>=0.6.0",
+  "mypy>=1.11",
 ]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# ruff の既定ルールだけを有効にする。E501 や isort、pyupgrade を足すと既存ファイルの多くに
+# 差分が出て、並行する #8 / #9 と衝突する。ルールを広げるのと ruff format の導入は別の変更で行う。
+select = ["E4", "E7", "E9", "F"]
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "src"
+packages = ["gateway", "app", "policy", "tools", "infra"]
 
 [tool.importlinter]
 root_packages = [

@@ -35,6 +35,9 @@ class AppInfra:
 
 def build_infra(*, default_sqlite_path: str) -> AppInfra:
     db_backend = os.getenv("DATABASE_BACKEND", "sqlite").strip().lower()
+    database: PostgresDatabase | SQLiteDatabase
+    db_idempotency_store: PostgresIdempotencyStore | SQLiteIdempotencyStore
+    idempotency_store: CompositeIdempotencyStore | PostgresIdempotencyStore | SQLiteIdempotencyStore
     if db_backend == "postgres":
         dsn = os.getenv("POSTGRES_DSN", "").strip()
         if not dsn:

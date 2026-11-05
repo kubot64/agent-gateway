@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, ContextManager
+from typing import Any
 from uuid import uuid4
 
 from app.models import ConversationMessage, Reminder
@@ -17,7 +18,7 @@ class SQLiteDatabase:
         self._ensure_schema()
 
     @contextmanager
-    def connect(self) -> sqlite3.Connection:
+    def connect(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(self.db_path)
         try:
             yield conn
@@ -116,7 +117,7 @@ class PostgresDatabase:
         self._ensure_schema()
 
     @contextmanager
-    def connect(self) -> ContextManager[Any]:
+    def connect(self) -> Iterator[Any]:
         conn = _psycopg_connect(self.dsn)
         try:
             yield conn

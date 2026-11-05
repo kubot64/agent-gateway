@@ -15,13 +15,7 @@ COPY README.md ./README.md
 COPY docs ./docs
 
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir \
-      fastapi>=0.110.0 \
-      uvicorn>=0.27.0 \
-      python-multipart>=0.0.9 \
-      pynacl>=1.5.0 \
-      "psycopg[binary]>=3.2.0" \
-      redis>=5.0.0
+    && pip install --no-cache-dir .
 
 EXPOSE 8000
 
