@@ -41,10 +41,30 @@ cd backend && PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_*.py
 cd backend && PYTHONPATH=src uvicorn gateway.main:app --host 0.0.0.0 --port 8000
 ```
 
+### 直接入口 `/api/agent/handle-message`
+
+`POST /api/agent/handle-message` は、Slack / Discord を通さずに依頼を送る開発用の入口だ。署名検証がなく、本文の `user_id` で誰にでもなりすませる。そのため既定では無効で、404 を返す。
+
+ローカル開発で使うときだけ、環境変数 `ENABLE_DIRECT_HANDLE_MESSAGE=1` を立てて起動する（`true`、`yes`、`on` も有効とみなす）。本番には設定しない。
+
+```bash
+cd backend && ENABLE_DIRECT_HANDLE_MESSAGE=1 PYTHONPATH=src uvicorn gateway.main:app --host 127.0.0.1 --port 8000
+```
+
+```bash
+curl -sS -X POST http://127.0.0.1:8000/api/agent/handle-message \
+  -H "content-type: application/json" \
+  -d '{"platform":"api","workspace_id":"W1","channel_id":"C1","user_id":"U1","text":"/ask こんにちは"}'
+```
+
+承認は署名検証済みの Slack interaction（`POST /api/inbound/slack/interactions`）からだけ受け付ける。以前あった認証なしの `POST /api/agent/confirm-action` は廃止した（ADR-0003）。
+
 ## run with postgres + redis
 
 ```bash
 cd infra && docker compose --profile app up -d --build
 ```
+
+docker compose でも直接入口は既定で無効だ。使うときは `ENABLE_DIRECT_HANDLE_MESSAGE=1 docker compose --profile app up -d --build` のように渡す。E2E（`backend/scripts/e2e_pg_redis.sh`）は自分でこの変数を立てる。
 
 本格的な README（解決する問題、構成図、4 つの安全、ADR）は 2026-11 中に書き換えます。

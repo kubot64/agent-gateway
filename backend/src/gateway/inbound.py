@@ -68,7 +68,7 @@ def handle_slack_event(
     }
 
 
-def handle_confirmation(payload: dict, *, request_id: str | None = None) -> dict:
+def _handle_confirmation(payload: dict, *, request_id: str | None = None) -> dict:
     response = service.confirm_action(
         confirmation_id=str(payload.get("confirmation_id", "")),
         approved=bool(payload.get("approved", False)),
@@ -160,7 +160,7 @@ def handle_slack_interaction(
                 "metadata": {},
             }
         )
-    agent_response = handle_confirmation(confirmation, request_id=request_id)
+    agent_response = _handle_confirmation(confirmation, request_id=request_id)
     return build_slack_response(agent_response)
 
 

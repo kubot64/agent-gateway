@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import os
@@ -404,6 +405,85 @@ class SlackPayloadTests(unittest.TestCase):
             }
         )
         self.assertEqual(response["blocks"][1]["elements"][0]["value"], "abc-123")
+
+
+def _post_json(path: str, payload: dict, headers: dict[str, str] | None = None) -> tuple[int, dict]:
+    """Send one JSON POST to the FastAPI app over ASGI and return (status, body)."""
+    from gateway.main import app
+
+    body = json.dumps(payload).encode("utf-8")
+    raw_headers = [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode("ascii"))]
+    for key, value in (headers or {}).items():
+        raw_headers.append((key.lower().encode("ascii"), value.encode("utf-8")))
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode("ascii"),
+        "query_string": b"",
+        "root_path": "",
+        "headers": raw_headers,
+        "client": ("testclient", 0),
+        "server": ("testserver", 80),
+    }
+    received = False
+    messages: list[dict] = []
+
+    async def receive() -> dict:
+        nonlocal received
+        if not received:
+            received = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict) -> None:
+        messages.append(message)
+
+    asyncio.run(app(scope, receive, send))
+    start = next(m for m in messages if m["type"] == "http.response.start")
+    response_body = b"".join(m.get("body", b"") for m in messages if m["type"] == "http.response.body")
+    return start["status"], json.loads(response_body or b"{}")
+
+
+class UnauthenticatedEntryTests(unittest.TestCase):
+    ENV = "ENABLE_DIRECT_HANDLE_MESSAGE"
+    ASK = {"platform": "api", "workspace_id": "W1", "channel_id": "C1", "user_id": "U1", "text": "/ask こんにちは"}
+
+    def test_confirm_action_entry_does_not_exist(self) -> None:
+        pending = handle_slack_command(
+            {"team_id": "T1", "channel_id": "C1", "user_id": "U1", "command": "/remind", "text": "2026-03-01T09:00 all hands"}
+        )
+        confirmation_id = pending["metadata"]["confirmation_id"]
+
+        status, _ = _post_json("/api/agent/confirm-action", {"confirmation_id": confirmation_id, "approved": True})
+
+        self.assertEqual(status, 404)
+        # 承認待ちは消費されず、署名検証つきの Slack interaction からは今までどおり承認できる。
+        approved = handle_slack_interaction(
+            {"payload": json.dumps({"actions": [{"action_id": "confirm", "value": confirmation_id}]})}
+        )
+        self.assertEqual(approved["status"], "completed")
+
+    def test_handle_message_returns_404_without_env(self) -> None:
+        with _temporary_env({self.ENV: None}):
+            status, body = _post_json("/api/agent/handle-message", self.ASK)
+        self.assertEqual(status, 404)
+        self.assertNotIn("status", body)
+
+    def test_handle_message_returns_404_when_env_is_not_truthy(self) -> None:
+        with _temporary_env({self.ENV: "0"}):
+            status, _ = _post_json("/api/agent/handle-message", self.ASK)
+        self.assertEqual(status, 404)
+
+    def test_handle_message_works_when_env_enabled(self) -> None:
+        with _temporary_env({self.ENV: "1"}):
+            status, body = _post_json("/api/agent/handle-message", self.ASK, headers={"x-request-id": "req-direct-http"})
+        self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "completed")
+        self.assertEqual(body["metadata"]["request_id"], "req-direct-http")
 
 
 class SQLiteStoreTests(unittest.TestCase):

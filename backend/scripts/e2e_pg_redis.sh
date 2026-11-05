@@ -9,6 +9,8 @@ E2E_MODE="${E2E_MODE:-auto}" # auto | host | docker
 E2E_CLEANUP="${E2E_CLEANUP:-0}" # 1 to stop compose stack on exit
 BASE_URL=""
 APP_PID=""
+# handle-message の直接入口は既定で無効。E2E では依頼を直接送るために有効にする。
+export ENABLE_DIRECT_HANDLE_MESSAGE=1
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -110,9 +112,14 @@ print(obj["metadata"]["confirmation_id"])
 PY
 )"
 
-curl -sS -X POST "${BASE_URL}/api/agent/confirm-action" \
+# 認証なしで承認できた confirm-action の入口は廃止されている。
+CONFIRM_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${BASE_URL}/api/agent/confirm-action" \
   -H "content-type: application/json" \
-  -d "{\"confirmation_id\":\"${CONFIRM_ID}\",\"approved\":true}" >/tmp/home-confirm.json
+  -d "{\"confirmation_id\":\"${CONFIRM_ID}\",\"approved\":true}")"
+if [[ "${CONFIRM_STATUS}" != "404" ]]; then
+  echo "confirm-action should be gone, got HTTP ${CONFIRM_STATUS}" >&2
+  exit 1
+fi
 
 DUP_EVENT_ID="evt-e2e-dup-$(python3 - <<'PY'
 import uuid

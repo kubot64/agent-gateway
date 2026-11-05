@@ -172,8 +172,9 @@ Vector DB:
 - `POST /api/inbound/discord/interactions`
 
 ### Agent
-- `POST /api/agent/handle-message`
-- `POST /api/agent/confirm-action`
+- `POST /api/agent/handle-message`（開発用の直接入口。`ENABLE_DIRECT_HANDLE_MESSAGE=1` のときだけ有効で、既定は 404）
+
+承認は署名検証済みの Slack interaction からだけ受け付ける。認証なしの `POST /api/agent/confirm-action` は廃止した（ADR-0003）。
 
 ### Internal
 - `POST /api/internal/tools/execute`
@@ -275,8 +276,8 @@ docs/
   - Ed25519 署名検証（`X-Signature-Ed25519` / `X-Signature-Timestamp`）
   - 重複イベント排除（interaction id）
 - Agent API
-  - `POST /api/agent/handle-message`
-  - `POST /api/agent/confirm-action`
+  - `POST /api/agent/handle-message`（2026-11 から `ENABLE_DIRECT_HANDLE_MESSAGE=1` のときだけ有効）
+  - `POST /api/agent/confirm-action`（2026-11 に廃止。ADR-0003）
   - `GET /api/health`
   - `GET /api/metrics`
 - `/ask` のLLM接続（OpenAI + ローカルフォールバック）
