@@ -59,3 +59,20 @@ layers = [
   "policy",
   "tools",
 ]
+
+[[tool.importlinter.contracts]]
+name = "Only policy runs tools: gateway and app must not import tools"
+type = "forbidden"
+source_modules = [
+  "gateway",
+  "app",
+]
+forbidden_modules = [
+  "tools",
+]
+# app -> policy -> tools のような間接 import は許す。直接 import だけを禁じる。
+allow_indirect_imports = true
+ignore_imports = [
+  # Linear クライアントの直接呼び出しは、linear.create_issue をツールにする #12 までの例外。
+  "app.service -> tools.linear",
+]

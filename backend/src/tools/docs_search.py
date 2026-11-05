@@ -6,7 +6,9 @@ from collections import Counter
 from dataclasses import dataclass
 from math import sqrt
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Mapping, Protocol
+
+from tools.base import InputField, InputSchema, PlannedExecution, ToolKind
 
 
 @dataclass
@@ -177,6 +179,37 @@ def build_default_search_client() -> DocsSearchClient:
 
 
 _TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_]+|[一-龯ぁ-んァ-ンー]+")
+
+
+class DocsSearchTool:
+    """docs.search: README と docs を検索する読み取りツール。"""
+
+    name = "docs.search"
+    kind = ToolKind.READ
+    input_schema = InputSchema(
+        fields={
+            "query": InputField(str),
+            "limit": InputField(int),
+        }
+    )
+
+    def __init__(self, client: DocsSearchClient) -> None:
+        self._client = client
+
+    def dry_run(self, tool_input: Mapping[str, Any]) -> PlannedExecution:
+        self.input_schema.validate(tool_input)
+        return PlannedExecution(
+            tool=self.name,
+            input=dict(tool_input),
+            description=f"docs を「{tool_input['query']}」で検索する",
+        )
+
+    def execute(self, tool_input: Mapping[str, Any], *, idempotency_key: str) -> dict[str, Any]:
+        self.input_schema.validate(tool_input)
+        results = self._client.search(str(tool_input["query"]), limit=int(tool_input["limit"]))
+        return {
+            "results": [{"path": r.path, "snippet": r.snippet, "score": r.score} for r in results],
+        }
 
 
 def _tokenize(text: str) -> list[str]:
