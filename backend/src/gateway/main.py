@@ -7,10 +7,10 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from adapters.slack.web_api import SlackAPIError, SlackWebAPIClient
-from api import inbound
-from api.observability import configure_logging, log_http_request
-from api.slack_payloads import extract_challenge, is_url_verification
+from gateway.slack_web_api import SlackAPIError, SlackWebAPIClient
+from gateway import inbound
+from gateway.observability import configure_logging, log_http_request
+from gateway.slack_payloads import extract_challenge, is_url_verification
 
 app = FastAPI(title="home-secretary-backend", version="0.1.0")
 configure_logging()

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from agent.service import AgentService
+from app.service import AgentService
 from infra.stores import (
     CompositeIdempotencyStore,
     PostgresAuditLogStore,

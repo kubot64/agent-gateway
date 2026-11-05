@@ -56,7 +56,7 @@ start_host_api() {
   export IDEMPOTENCY_BACKEND=redis
   export REDIS_URL="${REDIS_URL:-redis://localhost:6379/0}"
   cd "${BACKEND_DIR}"
-  PYTHONPATH=src python3 -m uvicorn api.app:app --host 127.0.0.1 --port "${PORT}" >/tmp/home-e2e-api.log 2>&1 &
+  PYTHONPATH=src python3 -m uvicorn gateway.main:app --host 127.0.0.1 --port "${PORT}" >/tmp/home-e2e-api.log 2>&1 &
   APP_PID=$!
   BASE_URL="http://127.0.0.1:${PORT}"
 }

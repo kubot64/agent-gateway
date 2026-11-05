@@ -9,6 +9,26 @@ LLM エージェントに安全に渡すための基盤です。2026-11 に `hom
 - 設計書: [docs/slack_discord_secretary_design.md](docs/slack_discord_secretary_design.md)
 - Cloud Run / Slack / Discord の構築手順: [docs/cloudrun_slack_discord_setup.md](docs/cloudrun_slack_discord_setup.md)
 
+## 構成
+
+`backend/src` は 4 層と、層の外にある infra に分かれる。依存は上から下への一方向だけで、下の層は上の層を import しない。
+
+| 層 | 受け持つもの |
+|---|---|
+| `gateway` | HTTP の入口、署名検証、受信の冪等性、Slack / Discord の入出力 |
+| `app` | AgentService、意図分類（parser）、LLM 呼び出し |
+| `policy` | 承認待ちと、依頼者本人による承認（今は空） |
+| `tools` | Linear クライアント、docs 検索 |
+| `infra` | DB と Redis の store、組み立て |
+
+層の契約は import-linter で検査する（設定は `backend/pyproject.toml`）。infra は契約の対象外で、組み立てのために `app` を import する。
+
+今の契約は、上の層が下の層を飛び越えて import することを許す。そのため `app` は `tools` を直接呼んでいる。これは ADR-0003 の「ツールを登録簿から取り出して実行する経路は policy 層だけが持つ」とまだ合っていない。policy 層を実装するときに、この経路を締める。
+
+```bash
+cd backend && PYTHONPATH=src lint-imports
+```
+
 ## test
 
 ```bash
@@ -18,7 +38,7 @@ cd backend && PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_*.py
 ## run api
 
 ```bash
-cd backend && PYTHONPATH=src uvicorn api.app:app --host 0.0.0.0 --port 8000
+cd backend && PYTHONPATH=src uvicorn gateway.main:app --host 0.0.0.0 --port 8000
 ```
 
 ## run with postgres + redis

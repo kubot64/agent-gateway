@@ -15,4 +15,24 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0.0",
+  "import-linter>=2.0",
+]
+
+[tool.importlinter]
+root_packages = [
+  "gateway",
+  "app",
+  "policy",
+  "tools",
+  "infra",
+]
+
+[[tool.importlinter.contracts]]
+name = "Layers: gateway -> app -> policy -> tools (no upward imports)"
+type = "layers"
+layers = [
+  "gateway",
+  "app",
+  "policy",
+  "tools",
 ]

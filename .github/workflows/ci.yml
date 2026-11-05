@@ -27,7 +27,12 @@ jobs:
             "python-multipart>=0.0.9" \
             "pynacl>=1.5.0" \
             "psycopg[binary]>=3.2.0" \
-            "redis>=5.0.0"
+            "redis>=5.0.0" \
+            "import-linter>=2.0"
+
+      - name: Check layer contracts
+        working-directory: backend
+        run: PYTHONPATH=src lint-imports
 
       - name: Run unit tests
         working-directory: backend

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, ContextManager
 from uuid import uuid4
 
-from agent.models import ConversationMessage, Reminder
+from app.models import ConversationMessage, Reminder
 
 
 class SQLiteDatabase:

@@ -10,8 +10,8 @@ from uuid import uuid4
 from .llm import LLMClient, build_default_llm_client
 from .models import AgentResponse, Command, ConversationMessage, InboundEvent, Intent, PendingConfirmation, Reminder
 from .parser import CommandParser
-from .search import DocsSearchClient, SearchResult, build_default_search_client
-from .task import TaskClient, TaskClientError, build_default_task_client
+from tools.docs_search import DocsSearchClient, SearchResult, build_default_search_client
+from tools.linear import TaskClient, TaskClientError, build_default_task_client
 
 
 class ReminderStore(Protocol):
