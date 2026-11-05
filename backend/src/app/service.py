@@ -4,13 +4,14 @@ import json
 import time
 from datetime import datetime, timezone
 from datetime import timedelta
-from typing import Callable, Protocol
+from typing import Any, Callable, Mapping, Protocol, Sequence
 from uuid import uuid4
 
 from .llm import LLMClient, build_default_llm_client
 from .models import AgentResponse, Command, ConversationMessage, InboundEvent, Intent, PendingConfirmation, Reminder
 from .parser import CommandParser
-from tools.docs_search import DocsSearchClient, SearchResult, build_default_search_client
+from policy.defaults import build_tool_executor
+from policy.executor import IntentOrigin, ToolExecutor, ToolIntent
 from tools.linear import TaskClient, TaskClientError, build_default_task_client
 
 
@@ -201,7 +202,7 @@ class AgentService:
         conversation_store: ConversationStore | None = None,
         preference_store: UserPreferenceStore | None = None,
         llm_client: LLMClient | None = None,
-        search_client: DocsSearchClient | None = None,
+        tool_executor: ToolExecutor | None = None,
         task_client: TaskClient | None = None,
         confirmation_ttl: timedelta = timedelta(minutes=5),
         now_provider: Callable[[], datetime] | None = None,
@@ -213,7 +214,7 @@ class AgentService:
         self.conversation_store = conversation_store or InMemoryConversationStore()
         self.preference_store = preference_store or InMemoryUserPreferenceStore()
         self.llm_client = llm_client or build_default_llm_client()
-        self.search_client = search_client or build_default_search_client()
+        self.tool_executor = tool_executor or build_tool_executor(conversations=self.conversation_store)
         self.task_client = task_client or build_default_task_client()
         self.pending_confirmations: dict[str, PendingConfirmation] = {}
         self.confirmation_ttl = confirmation_ttl
@@ -226,13 +227,17 @@ class AgentService:
 
         if command.intent is Intent.ASK:
             question = command.payload.get("question") or "質問が空です。"
-            context_results = self.search_client.search(str(question), limit=3)
+            search = self.tool_executor.handle(
+                ToolIntent(tool="docs.search", input={"query": str(question), "limit": 3}),
+                origin=IntentOrigin.REQUESTER,
+            )
+            context_results = search["results"]
             llm_input = _build_ask_prompt(str(question), context_results)
             answer = self.llm_client.answer(llm_input)
             answer = self._apply_mode(event=event, text=answer)
             metadata: dict[str, object] = {}
             if context_results:
-                metadata["sources"] = [r.path for r in context_results]
+                metadata["sources"] = [r["path"] for r in context_results]
             response = AgentResponse(text=answer, status="completed", metadata=metadata)
             self._log(action="handle_message", event=event, command=command, response=response, request_id=request_id)
             self._record_metric(event=event, command=command, response=response, duration_ms=_duration_ms(start))
@@ -444,13 +449,20 @@ class AgentService:
     def _handle_summarize(self, event: InboundEvent, command: Command) -> AgentResponse:
         target = str(command.payload.get("target", "current_thread"))
         use_thread = target == "current_thread"
-        messages = self.conversation_store.recent(
-            platform=event.platform,
-            workspace_id=event.workspace_id,
-            channel_id=event.channel_id,
-            thread_id=event.thread_id if use_thread else None,
-            limit=30,
+        conversation = self.tool_executor.handle(
+            ToolIntent(
+                tool="conversation.summarize",
+                input={
+                    "platform": event.platform,
+                    "workspace_id": event.workspace_id,
+                    "channel_id": event.channel_id,
+                    "thread_id": event.thread_id if use_thread else None,
+                    "limit": 30,
+                },
+            ),
+            origin=IntentOrigin.REQUESTER,
         )
+        messages = conversation["messages"]
         if not messages:
             return AgentResponse(
                 text="要約対象メッセージが見つかりませんでした。",
@@ -460,7 +472,7 @@ class AgentService:
 
         prompt_lines = ["以下を日本語で3行程度に要約してください。"]
         for idx, message in enumerate(messages, start=1):
-            prompt_lines.append(f"{idx}. {message.user_id}: {message.text}")
+            prompt_lines.append(f"{idx}. {message['user_id']}: {message['text']}")
         summary = self.llm_client.answer("\n".join(prompt_lines))
         summary = self._apply_mode(event=event, text=summary)
         return AgentResponse(
@@ -569,7 +581,7 @@ def _duration_ms(start: float) -> int:
     return int((time.perf_counter() - start) * 1000)
 
 
-def _build_ask_prompt(question: str, search_results: list[SearchResult]) -> str:
+def _build_ask_prompt(question: str, search_results: Sequence[Mapping[str, Any]]) -> str:
     if not search_results:
         return question
 
@@ -578,7 +590,7 @@ def _build_ask_prompt(question: str, search_results: list[SearchResult]) -> str:
         "参考情報:",
     ]
     for idx, result in enumerate(search_results, start=1):
-        lines.append(f"{idx}. source={result.path}")
-        lines.append(f"   snippet={result.snippet}")
+        lines.append(f"{idx}. source={result['path']}")
+        lines.append(f"   snippet={result['snippet']}")
     lines.append("参考情報に基づいて簡潔に回答してください。")
     return "\n".join(lines)

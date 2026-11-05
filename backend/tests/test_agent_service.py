@@ -13,8 +13,10 @@ from gateway.slack_web_api import SlackAPIError, SlackWebAPIClient
 from app.llm import LocalFallbackLLMClient
 from app.models import InboundEvent
 from app.service import AgentService, InMemoryMetricStore
-from tools.docs_search import LocalMarkdownSearchClient, LocalVectorSearchClient, SearchResult, build_default_search_client
+from policy.executor import ToolExecutor
+from tools.docs_search import DocsSearchTool, LocalMarkdownSearchClient, LocalVectorSearchClient, SearchResult, build_default_search_client
 from tools.linear import TaskClientError
+from tools.registry import ToolRegistry
 from gateway.discord_payloads import normalize_discord_interaction
 from gateway.discord_security import DiscordSignatureVerificationError, verify_discord_signature
 from gateway.inbound import handle_agent_message, handle_discord_interaction, handle_slack_command, handle_slack_event, handle_slack_interaction
@@ -156,17 +158,18 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(metric_store.records[0]["intent"], "ask")
 
     def test_ask_includes_sources_from_search(self) -> None:
+        search_client = self.FakeSearchClient(
+            [
+                SearchResult(
+                    path="docs/example.md",
+                    snippet="署名検証を実装する",
+                    score=3,
+                )
+            ]
+        )
         service = AgentService(
             llm_client=LocalFallbackLLMClient(),
-            search_client=self.FakeSearchClient(
-                [
-                    SearchResult(
-                        path="docs/example.md",
-                        snippet="署名検証を実装する",
-                        score=3,
-                    )
-                ]
-            ),
+            tool_executor=ToolExecutor(ToolRegistry([DocsSearchTool(search_client)])),
         )
         response = service.handle_message(build_event("/ask 署名検証って何？"))
         self.assertEqual(response.status, "completed")

@@ -17,13 +17,16 @@ LLM エージェントに安全に渡すための基盤です。2026-11 に `hom
 |---|---|
 | `gateway` | HTTP の入口、署名検証、受信の冪等性、Slack / Discord の入出力 |
 | `app` | AgentService、意図分類（parser）、LLM 呼び出し |
-| `policy` | 承認待ちと、依頼者本人による承認（今は空） |
-| `tools` | Linear クライアント、docs 検索 |
+| `policy` | 意図を受け取ってツールを実行する入口（`ToolExecutor`）。読み取りはそのまま実行する。承認待ちと、依頼者本人による承認はこれから足す |
+| `tools` | ツールの I/F、登録簿、ツール（`docs.search`、`conversation.summarize`）、Linear クライアント |
 | `infra` | DB と Redis の store、組み立て |
 
 層の契約は import-linter で検査する（設定は `backend/pyproject.toml`）。infra は契約の対象外で、組み立てのために `app` を import する。
 
-今の契約は、上の層が下の層を飛び越えて import することを許す。そのため `app` は `tools` を直接呼んでいる。これは ADR-0003 の「ツールを登録簿から取り出して実行する経路は policy 層だけが持つ」とまだ合っていない。policy 層を実装するときに、この経路を締める。
+契約は 2 つある。
+
+- **layers**: gateway → app → policy → tools の順で、上向きの import を禁じる。
+- **forbidden**: gateway と app から tools への直接 import を禁じる。ツールを登録簿から取り出して実行できるのは policy だけにするためだ（ADR-0003）。例外は `app.service -> tools.linear` だけで、`linear.create_issue` をツールにする #12 で外す。
 
 ```bash
 cd backend && PYTHONPATH=src lint-imports
