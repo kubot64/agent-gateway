@@ -31,24 +31,19 @@ def handle_slack_event(
     signing_secret: str | None = None,
     request_id: str | None = None,
 ) -> dict:
-    """Framework-agnostic entrypoint used by future web handlers."""
-    if signing_secret:
-        body = raw_body
-        if body is None:
-            body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-        try:
-            verify_slack_signature(signing_secret=signing_secret, raw_body=body, headers=headers or {})
-        except SignatureVerificationError:
-            return {
-                "status": "unauthorized",
-                "text": "署名検証に失敗しました。",
-                "metadata": {
-                    "request_id": request_id,
-                    "error_type": "signature_verification_error",
-                    "error_message": "invalid slack signature",
-                },
-            }
+    rejected = _reject_unsigned_slack(
+        signing_secret=signing_secret,
+        headers=headers,
+        raw_body=raw_body if raw_body is not None else _json_bytes(payload),
+        request_id=request_id,
+    )
+    if rejected:
+        return rejected
+    return _process_slack_event(payload, request_id=request_id)
 
+
+def _process_slack_event(payload: dict, *, request_id: str | None = None) -> dict:
+    """署名を確かめたあとのイベントを処理する。署名の検証は呼び出し側の責任。"""
     event = _normalize_slack_event(payload)
     idempotency_key = _build_slack_idempotency_key(payload, event)
     if not idempotency_store.mark_processed(idempotency_key):
@@ -133,22 +128,14 @@ def handle_slack_interaction(
     signing_secret: str | None = None,
     request_id: str | None = None,
 ) -> dict:
-    if signing_secret:
-        body = raw_body
-        if body is None:
-            body = json.dumps(form_payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-        try:
-            verify_slack_signature(signing_secret=signing_secret, raw_body=body, headers=headers or {})
-        except SignatureVerificationError:
-            return {
-                "status": "unauthorized",
-                "text": "署名検証に失敗しました。",
-                "metadata": {
-                    "request_id": request_id,
-                    "error_type": "signature_verification_error",
-                    "error_message": "invalid slack signature",
-                },
-            }
+    rejected = _reject_unsigned_slack(
+        signing_secret=signing_secret,
+        headers=headers,
+        raw_body=raw_body if raw_body is not None else _json_bytes(form_payload),
+        request_id=request_id,
+    )
+    if rejected:
+        return rejected
 
     payload = parse_interaction_payload(form_payload)
     confirmation = extract_confirmation_from_interaction(payload)
@@ -172,24 +159,26 @@ def handle_discord_interaction(
     public_key: str | None = None,
     request_id: str | None = None,
 ) -> dict:
-    if public_key:
-        body = raw_body if raw_body is not None else json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-        try:
-            verify_discord_signature(
-                public_key=public_key,
-                raw_body=body,
-                headers=headers or {},
-            )
-        except DiscordSignatureVerificationError:
-            return {
-                "status": "unauthorized",
-                "text": "署名検証に失敗しました。",
-                "metadata": {
-                    "request_id": request_id,
-                    "error_type": "signature_verification_error",
-                    "error_message": "invalid discord signature",
-                },
-            }
+    if not public_key:
+        return _unauthorized(
+            request_id=request_id,
+            text="署名鍵が設定されていないため、受け付けられません。",
+            error_type="public_key_not_configured",
+            error_message="DISCORD_PUBLIC_KEY is not configured",
+        )
+    try:
+        verify_discord_signature(
+            public_key=public_key,
+            raw_body=raw_body if raw_body is not None else _json_bytes(payload),
+            headers=headers or {},
+        )
+    except DiscordSignatureVerificationError:
+        return _unauthorized(
+            request_id=request_id,
+            text="署名検証に失敗しました。",
+            error_type="signature_verification_error",
+            error_message="invalid discord signature",
+        )
 
     if is_discord_ping(payload):
         return {"type": 1}
@@ -204,7 +193,7 @@ def handle_discord_interaction(
         }
 
     normalized_payload = normalize_discord_interaction(payload)
-    agent_response = handle_slack_event(normalized_payload, request_id=request_id)
+    agent_response = _process_slack_event(normalized_payload, request_id=request_id)
     content = str(agent_response.get("text", ""))
     metadata = dict(agent_response.get("metadata", {}))
     if request_id:
@@ -217,6 +206,52 @@ def handle_discord_interaction(
         "status": agent_response.get("status", "unknown"),
         "metadata": metadata,
     }
+
+
+def _reject_unsigned_slack(
+    *,
+    signing_secret: str | None,
+    headers: Mapping[str, str] | None,
+    raw_body: bytes,
+    request_id: str | None,
+) -> dict | None:
+    """Slack の署名を確かめ、通らなければ拒否の応答を返す。
+
+    署名鍵が未設定のときも拒否する。鍵なしで検証を飛ばすと、誰でも依頼者を名乗ったり承認したりできてしまう。
+    """
+    if not signing_secret:
+        return _unauthorized(
+            request_id=request_id,
+            text="署名鍵が設定されていないため、受け付けられません。",
+            error_type="signing_secret_not_configured",
+            error_message="SLACK_SIGNING_SECRET is not configured",
+        )
+    try:
+        verify_slack_signature(signing_secret=signing_secret, raw_body=raw_body, headers=headers or {})
+    except SignatureVerificationError:
+        return _unauthorized(
+            request_id=request_id,
+            text="署名検証に失敗しました。",
+            error_type="signature_verification_error",
+            error_message="invalid slack signature",
+        )
+    return None
+
+
+def _unauthorized(*, request_id: str | None, text: str, error_type: str, error_message: str) -> dict:
+    return {
+        "status": "unauthorized",
+        "text": text,
+        "metadata": {
+            "request_id": request_id,
+            "error_type": error_type,
+            "error_message": error_message,
+        },
+    }
+
+
+def _json_bytes(payload: Mapping[str, Any]) -> bytes:
+    return json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
 def _normalize_slack_event(payload: dict) -> InboundEvent:

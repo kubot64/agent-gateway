@@ -264,6 +264,7 @@ docs/
 
 ### 実装済み
 - Slack署名検証（HMAC SHA256 / 5分許容）
+  - 2026-11 から `SLACK_SIGNING_SECRET` / `DISCORD_PUBLIC_KEY` が未設定なら Slack / Discord の入口は 401 を返す（以前は検証を飛ばしていた）
 - Slack inbound API
   - `POST /api/inbound/slack/events`
   - `POST /api/inbound/slack/commands`

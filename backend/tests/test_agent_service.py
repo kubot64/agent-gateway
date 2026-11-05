@@ -5,10 +5,14 @@ import hmac
 import json
 import os
 import tempfile
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
+from urllib.parse import urlencode
 from uuid import uuid4
+
+from nacl.signing import SigningKey
 
 from gateway.slack_web_api import SlackAPIError, SlackWebAPIClient
 from app.llm import LocalFallbackLLMClient
@@ -24,6 +28,57 @@ from gateway.slack_payloads import extract_confirmation_from_interaction, normal
 from gateway.slack_responses import build_slack_response
 from infra.stores import SQLiteAuditLogStore, SQLiteCommandMetricStore, SQLiteDatabase, SQLiteIdempotencyStore, SQLiteReminderStore
 from infra.factory import build_infra
+
+
+SLACK_TEST_SECRET = "test-signing-secret"
+
+
+def _slack_signed_headers(secret: str, raw_body: bytes) -> dict[str, str]:
+    timestamp = str(int(time.time()))
+    base = f"v0:{timestamp}:".encode("utf-8") + raw_body
+    signature = "v0=" + hmac.new(secret.encode("utf-8"), base, "sha256").hexdigest()
+    return {"X-Slack-Request-Timestamp": timestamp, "X-Slack-Signature": signature}
+
+
+DISCORD_TEST_SIGNING_KEY = SigningKey.generate()
+DISCORD_TEST_PUBLIC_KEY = DISCORD_TEST_SIGNING_KEY.verify_key.encode().hex()
+
+
+def _discord_signed_headers(raw_body: bytes) -> dict[str, str]:
+    timestamp = str(int(time.time()))
+    signature = DISCORD_TEST_SIGNING_KEY.sign(timestamp.encode("utf-8") + raw_body).signature.hex()
+    return {"X-Signature-Ed25519": signature, "X-Signature-Timestamp": timestamp}
+
+
+def _signed_slack_event(payload: dict, *, request_id: str | None = None) -> dict:
+    raw_body = json.dumps(payload).encode("utf-8")
+    return handle_slack_event(
+        payload,
+        headers=_slack_signed_headers(SLACK_TEST_SECRET, raw_body),
+        raw_body=raw_body,
+        signing_secret=SLACK_TEST_SECRET,
+        request_id=request_id,
+    )
+
+
+def _signed_slack_command(form: dict[str, str]) -> dict:
+    raw_body = urlencode(form).encode("utf-8")
+    return handle_slack_command(
+        form,
+        headers=_slack_signed_headers(SLACK_TEST_SECRET, raw_body),
+        raw_body=raw_body,
+        signing_secret=SLACK_TEST_SECRET,
+    )
+
+
+def _signed_discord_interaction(payload: dict) -> dict:
+    raw_body = json.dumps(payload).encode("utf-8")
+    return handle_discord_interaction(
+        payload,
+        headers=_discord_signed_headers(raw_body),
+        raw_body=raw_body,
+        public_key=DISCORD_TEST_PUBLIC_KEY,
+    )
 
 
 def build_event(text: str) -> InboundEvent:
@@ -241,8 +296,8 @@ class SecurityTests(unittest.TestCase):
                 "text": "/ask hello",
             },
         }
-        first = handle_slack_event(payload)
-        second = handle_slack_event(payload)
+        first = _signed_slack_event(payload)
+        second = _signed_slack_event(payload)
         self.assertEqual(first["status"], "completed")
         self.assertEqual(second["status"], "duplicate")
 
@@ -257,7 +312,7 @@ class SecurityTests(unittest.TestCase):
                 "text": "/ask hello",
             },
         }
-        response = handle_slack_event(payload, request_id="req-123")
+        response = _signed_slack_event(payload, request_id="req-123")
         self.assertEqual(response["metadata"]["request_id"], "req-123")
 
     def test_handle_agent_message_direct(self) -> None:
@@ -292,7 +347,7 @@ class SlackPayloadTests(unittest.TestCase):
         self.assertTrue(payload["event"]["text"].startswith("/ask "))
 
     def test_handle_slash_command(self) -> None:
-        response = handle_slack_command(
+        response = _signed_slack_command(
             {
                 "team_id": "T1",
                 "channel_id": "C1",
@@ -306,7 +361,7 @@ class SlackPayloadTests(unittest.TestCase):
         self.assertFalse("blocks" in response)
 
     def test_handle_slash_command_with_alias(self) -> None:
-        response = handle_slack_command(
+        response = _signed_slack_command(
             {
                 "team_id": "T1",
                 "channel_id": "C1",
@@ -350,7 +405,7 @@ class SlackPayloadTests(unittest.TestCase):
         self.assertEqual(confirmation["approved"], False)
 
     def test_handle_slack_interaction_confirm(self) -> None:
-        pending = handle_slack_command(
+        pending = _signed_slack_command(
             {
                 "team_id": "T1",
                 "channel_id": "C1",
@@ -360,26 +415,28 @@ class SlackPayloadTests(unittest.TestCase):
             }
         )
         confirmation_id = pending["metadata"]["confirmation_id"]
+        form, raw_body = _interaction_form(confirmation_id)
         response = handle_slack_interaction(
-            {
-                "payload": json.dumps(
-                    {
-                        "actions": [
-                            {
-                                "action_id": "confirm",
-                                "value": confirmation_id,
-                            }
-                        ]
-                    }
-                )
-            }
+            form,
+            headers=_slack_signed_headers(SLACK_TEST_SECRET, raw_body),
+            raw_body=raw_body,
+            signing_secret=SLACK_TEST_SECRET,
         )
         self.assertEqual(response["status"], "completed")
         self.assertEqual(response["response_type"], "ephemeral")
         self.assertFalse("blocks" in response)
 
+    def test_handle_slack_interaction_rejects_when_signing_secret_missing(self) -> None:
+        pending = _signed_slack_command(
+            {"team_id": "T1", "channel_id": "C1", "user_id": "U1", "command": "/remind", "text": "2026-03-01T09:00 all hands"}
+        )
+        form, raw_body = _interaction_form(pending["metadata"]["confirmation_id"])
+        response = handle_slack_interaction(form, raw_body=raw_body, signing_secret=None)
+        self.assertEqual(response["status"], "unauthorized")
+        self.assertEqual(response["metadata"]["error_type"], "signing_secret_not_configured")
+
     def test_handle_slash_command_needs_confirmation_has_blocks(self) -> None:
-        response = handle_slack_command(
+        response = _signed_slack_command(
             {
                 "team_id": "T1",
                 "channel_id": "C1",
@@ -407,12 +464,16 @@ class SlackPayloadTests(unittest.TestCase):
         self.assertEqual(response["blocks"][1]["elements"][0]["value"], "abc-123")
 
 
-def _post_json(path: str, payload: dict, headers: dict[str, str] | None = None) -> tuple[int, dict]:
-    """Send one JSON POST to the FastAPI app over ASGI and return (status, body)."""
+def _interaction_form(confirmation_id: str, action_id: str = "confirm") -> tuple[dict[str, str], bytes]:
+    form = {"payload": json.dumps({"actions": [{"action_id": action_id, "value": confirmation_id}]})}
+    return form, urlencode(form).encode("utf-8")
+
+
+def _post(path: str, body: bytes, content_type: str, headers: dict[str, str] | None = None) -> tuple[int, dict]:
+    """Send one POST to the FastAPI app over ASGI and return (status, JSON body)."""
     from gateway.main import app
 
-    body = json.dumps(payload).encode("utf-8")
-    raw_headers = [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode("ascii"))]
+    raw_headers = [(b"content-type", content_type.encode("ascii")), (b"content-length", str(len(body)).encode("ascii"))]
     for key, value in (headers or {}).items():
         raw_headers.append((key.lower().encode("ascii"), value.encode("utf-8")))
     scope = {
@@ -448,24 +509,95 @@ def _post_json(path: str, payload: dict, headers: dict[str, str] | None = None) 
     return start["status"], json.loads(response_body or b"{}")
 
 
+def _post_json(path: str, payload: dict, headers: dict[str, str] | None = None) -> tuple[int, dict]:
+    return _post(path, json.dumps(payload).encode("utf-8"), "application/json", headers)
+
+
+def _post_interaction(raw_body: bytes, headers: dict[str, str] | None = None) -> tuple[int, dict]:
+    return _post("/api/inbound/slack/interactions", raw_body, "application/x-www-form-urlencoded", headers)
+
+
+def _create_pending_confirmation() -> str:
+    pending = _signed_slack_command(
+        {"team_id": "T1", "channel_id": "C1", "user_id": "U1", "command": "/remind", "text": "2026-03-01T09:00 all hands"}
+    )
+    return pending["metadata"]["confirmation_id"]
+
+
 class UnauthenticatedEntryTests(unittest.TestCase):
     ENV = "ENABLE_DIRECT_HANDLE_MESSAGE"
     ASK = {"platform": "api", "workspace_id": "W1", "channel_id": "C1", "user_id": "U1", "text": "/ask こんにちは"}
 
     def test_confirm_action_entry_does_not_exist(self) -> None:
-        pending = handle_slack_command(
-            {"team_id": "T1", "channel_id": "C1", "user_id": "U1", "command": "/remind", "text": "2026-03-01T09:00 all hands"}
-        )
-        confirmation_id = pending["metadata"]["confirmation_id"]
+        confirmation_id = _create_pending_confirmation()
 
         status, _ = _post_json("/api/agent/confirm-action", {"confirmation_id": confirmation_id, "approved": True})
 
         self.assertEqual(status, 404)
-        # 承認待ちは消費されず、署名検証つきの Slack interaction からは今までどおり承認できる。
-        approved = handle_slack_interaction(
-            {"payload": json.dumps({"actions": [{"action_id": "confirm", "value": confirmation_id}]})}
-        )
-        self.assertEqual(approved["status"], "completed")
+        # 承認待ちは消費されず、署名つきの Slack interaction からは今までどおり承認できる。
+        _, raw_body = _interaction_form(confirmation_id)
+        with _temporary_env({"SLACK_SIGNING_SECRET": SLACK_TEST_SECRET}):
+            status, body = _post_interaction(raw_body, _slack_signed_headers(SLACK_TEST_SECRET, raw_body))
+        self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "completed")
+
+    def test_interaction_is_rejected_when_signing_secret_is_not_configured(self) -> None:
+        confirmation_id = _create_pending_confirmation()
+        _, raw_body = _interaction_form(confirmation_id)
+
+        with _temporary_env({"SLACK_SIGNING_SECRET": None}):
+            status, body = _post_interaction(raw_body)
+
+        self.assertEqual(status, 401)
+        self.assertEqual(body["status"], "unauthorized")
+        # 拒否された承認は実行されず、承認待ちのまま残る。
+        with _temporary_env({"SLACK_SIGNING_SECRET": SLACK_TEST_SECRET}):
+            status, body = _post_interaction(raw_body, _slack_signed_headers(SLACK_TEST_SECRET, raw_body))
+        self.assertEqual(body["status"], "completed")
+
+    def test_unsigned_interaction_is_rejected(self) -> None:
+        _, raw_body = _interaction_form(_create_pending_confirmation())
+        with _temporary_env({"SLACK_SIGNING_SECRET": SLACK_TEST_SECRET}):
+            status, body = _post_interaction(raw_body)
+        self.assertEqual(status, 401)
+        self.assertEqual(body["status"], "unauthorized")
+
+    def test_slack_event_is_rejected_when_signing_secret_is_not_configured(self) -> None:
+        payload = {"event_id": f"evt-{uuid4()}", "team_id": "T1", "event": {"ts": "1700000000", "channel": "C1", "user": "U1", "text": "/ask hello"}}
+        with _temporary_env({"SLACK_SIGNING_SECRET": None, "SLACK_BOT_TOKEN": None}):
+            status, body = _post_json("/api/inbound/slack/events", payload)
+        self.assertEqual(status, 401)
+        self.assertEqual(body["metadata"]["error_type"], "signing_secret_not_configured")
+
+    def test_signed_slack_event_is_accepted(self) -> None:
+        payload = {"event_id": f"evt-{uuid4()}", "team_id": "T1", "event": {"ts": "1700000000", "channel": "C1", "user": "U1", "text": "/ask hello"}}
+        raw_body = json.dumps(payload).encode("utf-8")
+        with _temporary_env({"SLACK_SIGNING_SECRET": SLACK_TEST_SECRET, "SLACK_BOT_TOKEN": None}):
+            status, body = _post("/api/inbound/slack/events", raw_body, "application/json", _slack_signed_headers(SLACK_TEST_SECRET, raw_body))
+        self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "completed")
+
+    def test_slack_command_is_rejected_when_signing_secret_is_not_configured(self) -> None:
+        raw_body = urlencode({"team_id": "T1", "channel_id": "C1", "user_id": "U1", "command": "/ask", "text": "hello"}).encode("utf-8")
+        with _temporary_env({"SLACK_SIGNING_SECRET": None}):
+            status, body = _post("/api/inbound/slack/commands", raw_body, "application/x-www-form-urlencoded")
+        self.assertEqual(status, 401)
+        self.assertEqual(body["metadata"]["error_type"], "signing_secret_not_configured")
+
+    def test_discord_interaction_is_rejected_when_public_key_is_not_configured(self) -> None:
+        payload = {"type": 2, "id": f"i-{uuid4()}", "guild_id": "G1", "channel_id": "D1", "member": {"user": {"id": "U1"}}, "data": {"name": "ask", "options": [{"name": "question", "value": "hello"}]}}
+        with _temporary_env({"DISCORD_PUBLIC_KEY": None}):
+            status, body = _post_json("/api/inbound/discord/interactions", payload)
+        self.assertEqual(status, 401)
+        self.assertEqual(body["metadata"]["error_type"], "public_key_not_configured")
+
+    def test_signed_discord_interaction_is_accepted(self) -> None:
+        payload = {"type": 2, "id": f"i-{uuid4()}", "guild_id": "G1", "channel_id": "D1", "member": {"user": {"id": "U1"}}, "data": {"name": "ask", "options": [{"name": "question", "value": "hello"}]}}
+        raw_body = json.dumps(payload).encode("utf-8")
+        with _temporary_env({"DISCORD_PUBLIC_KEY": DISCORD_TEST_PUBLIC_KEY}):
+            status, body = _post("/api/inbound/discord/interactions", raw_body, "application/json", _discord_signed_headers(raw_body))
+        self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "completed")
 
     def test_handle_message_returns_404_without_env(self) -> None:
         with _temporary_env({self.ENV: None}):
@@ -686,12 +818,12 @@ class DiscordInboundTests(unittest.TestCase):
         self.assertEqual(payload["event"]["text"], "/mode detailed")
 
     def test_handle_discord_ping(self) -> None:
-        response = handle_discord_interaction({"type": 1})
+        response = _signed_discord_interaction({"type": 1})
         self.assertEqual(response["type"], 1)
 
     def test_handle_discord_interaction_remind(self) -> None:
         interaction_id = f"i-{uuid4()}"
-        response = handle_discord_interaction(
+        response = _signed_discord_interaction(
             {
                 "type": 2,
                 "id": interaction_id,
@@ -738,8 +870,8 @@ class DiscordInboundTests(unittest.TestCase):
                 "options": [{"name": "question", "value": "hello"}],
             },
         }
-        first = handle_discord_interaction(payload)
-        second = handle_discord_interaction(payload)
+        first = _signed_discord_interaction(payload)
+        second = _signed_discord_interaction(payload)
         self.assertEqual(first["status"], "completed")
         self.assertEqual(second["status"], "duplicate")
 

@@ -6,11 +6,14 @@ BACKEND_DIR="${ROOT_DIR}/backend"
 INFRA_DIR="${ROOT_DIR}/infra"
 PORT="${PORT:-18000}"
 E2E_MODE="${E2E_MODE:-auto}" # auto | host | docker
-E2E_CLEANUP="${E2E_CLEANUP:-0}" # 1 to stop compose stack on exit
+E2E_CLEANUP="${E2E_CLEANUP:-0}" # 1 to also stop postgres + redis on exit (the test app is always stopped)
 BASE_URL=""
 APP_PID=""
+DOCKER_APP_STARTED=0
 # handle-message の直接入口は既定で無効。E2E では依頼を直接送るために有効にする。
 export ENABLE_DIRECT_HANDLE_MESSAGE=1
+# Slack の入口は署名鍵がないと 401 を返す。E2E 用の鍵で起動し、送るリクエストに署名する。
+export SLACK_SIGNING_SECRET="e2e-slack-signing-secret"
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -30,11 +33,33 @@ cleanup() {
   if [[ -n "${APP_PID}" ]]; then
     kill "${APP_PID}" >/dev/null 2>&1 || true
   fi
+  # テスト用アプリは直接入口を開けて起動しているので、E2E_CLEANUP に関係なく必ず止める。
+  if [[ "${DOCKER_APP_STARTED}" == "1" ]]; then
+    docker compose -f "${INFRA_DIR}/docker-compose.yml" --profile app rm --stop --force app >/dev/null 2>&1 || true
+  fi
   if [[ "${E2E_CLEANUP}" == "1" ]]; then
     docker compose -f "${INFRA_DIR}/docker-compose.yml" --profile app down >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
+
+# Slack の署名を付けて JSON を POST する。$1: path, $2: body, $3: 応答の保存先
+post_slack_signed() {
+  local path="$1" body="$2" out="$3" ts sig
+  ts="$(date +%s)"
+  sig="$(python3 - "${SLACK_SIGNING_SECRET}" "${ts}" "${body}" <<'PY'
+import hashlib, hmac, sys
+secret, ts, body = sys.argv[1], sys.argv[2], sys.argv[3]
+base = f"v0:{ts}:".encode("utf-8") + body.encode("utf-8")
+print("v0=" + hmac.new(secret.encode("utf-8"), base, hashlib.sha256).hexdigest())
+PY
+)"
+  curl -sS -X POST "${BASE_URL}${path}" \
+    -H "content-type: application/json" \
+    -H "X-Slack-Request-Timestamp: ${ts}" \
+    -H "X-Slack-Signature: ${sig}" \
+    --data-binary "${body}" >"${out}"
+}
 
 has_host_python_deps() {
   python3 - <<'PY'
@@ -65,6 +90,7 @@ start_host_api() {
 
 start_docker_api() {
   echo "[2/6] docker mode selected, starting compose app profile"
+  DOCKER_APP_STARTED=1
   docker compose -f "${INFRA_DIR}/docker-compose.yml" --profile app up -d --build
   BASE_URL="http://127.0.0.1:8000"
 }
@@ -127,8 +153,15 @@ print(uuid.uuid4().hex)
 PY
 )"
 DUP_PAYLOAD="{\"event_id\":\"${DUP_EVENT_ID}\",\"team_id\":\"T1\",\"event\":{\"ts\":\"1700000000\",\"channel\":\"C1\",\"user\":\"U1\",\"text\":\"/ask hello\"}}"
-curl -sS -X POST "${BASE_URL}/api/inbound/slack/events" -H "content-type: application/json" -d "${DUP_PAYLOAD}" >/tmp/home-dup1.json
-curl -sS -X POST "${BASE_URL}/api/inbound/slack/events" -H "content-type: application/json" -d "${DUP_PAYLOAD}" >/tmp/home-dup2.json
+# 署名のないイベントは 401 で拒否される。
+UNSIGNED_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${BASE_URL}/api/inbound/slack/events" \
+  -H "content-type: application/json" -d "${DUP_PAYLOAD}")"
+if [[ "${UNSIGNED_STATUS}" != "401" ]]; then
+  echo "unsigned slack event should be rejected, got HTTP ${UNSIGNED_STATUS}" >&2
+  exit 1
+fi
+post_slack_signed /api/inbound/slack/events "${DUP_PAYLOAD}" /tmp/home-dup1.json
+post_slack_signed /api/inbound/slack/events "${DUP_PAYLOAD}" /tmp/home-dup2.json
 python3 - <<'PY'
 import json
 with open("/tmp/home-dup1.json", "r", encoding="utf-8") as f:

@@ -57,6 +57,17 @@ cd backend && mypy
 cd backend && PYTHONPATH=src uvicorn gateway.main:app --host 0.0.0.0 --port 8000
 ```
 
+### 署名鍵
+
+Slack と Discord の入口は、署名鍵が設定されていないと 401 を返す。鍵がないまま署名検証を飛ばすと、誰でも依頼者を名乗ったり承認したりできるからだ。
+
+| 環境変数 | 必要な入口 |
+|---|---|
+| `SLACK_SIGNING_SECRET` | `/api/inbound/slack/events`、`/api/inbound/slack/commands`、`/api/inbound/slack/interactions` |
+| `DISCORD_PUBLIC_KEY` | `/api/inbound/discord/interactions` |
+
+ローカルで Slack の入口を叩くときも、鍵を設定し、その鍵で署名したリクエストを送る。署名の作り方は `backend/scripts/e2e_pg_redis.sh` の `post_slack_signed` を参照。
+
 ### 直接入口 `/api/agent/handle-message`
 
 `POST /api/agent/handle-message` は、Slack / Discord を通さずに依頼を送る開発用の入口だ。署名検証がなく、本文の `user_id` で誰にでもなりすませる。そのため既定では無効で、404 を返す。
@@ -81,6 +92,6 @@ curl -sS -X POST http://127.0.0.1:8000/api/agent/handle-message \
 cd infra && docker compose --profile app up -d --build
 ```
 
-docker compose でも直接入口は既定で無効だ。使うときは `ENABLE_DIRECT_HANDLE_MESSAGE=1 docker compose --profile app up -d --build` のように渡す。E2E（`backend/scripts/e2e_pg_redis.sh`）は自分でこの変数を立てる。
+docker compose でも直接入口は既定で無効で、署名鍵も入っていない。使うときは `ENABLE_DIRECT_HANDLE_MESSAGE=1 SLACK_SIGNING_SECRET=... docker compose --profile app up -d --build` のように実行環境から渡す。E2E（`backend/scripts/e2e_pg_redis.sh`）は E2E 用の値を自分で立て、終了時にテスト用アプリを止める。
 
 本格的な README（解決する問題、構成図、4 つの安全、ADR）は 2026-11 中に書き換えます。

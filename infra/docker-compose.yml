@@ -15,6 +15,9 @@ services:
       DOC_SEARCH_BACKEND: hybrid
       # handle-message の直接入口。既定は無効で、ローカル開発と E2E でだけ 1 にする。
       ENABLE_DIRECT_HANDLE_MESSAGE: ${ENABLE_DIRECT_HANDLE_MESSAGE:-0}
+      # Slack / Discord の入口は鍵がないと 401 を返す。使うときは実行環境から渡す。
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
+      DISCORD_PUBLIC_KEY: ${DISCORD_PUBLIC_KEY:-}
     ports:
       - "8000:8000"
     depends_on:
