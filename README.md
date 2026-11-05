@@ -31,8 +31,24 @@ cd backend && PYTHONPATH=src lint-imports
 
 ## test
 
+Python 3.11 以上が要る。依存は `backend/pyproject.toml` にまとめてあり、CI も同じ定義から入れる。
+
+```bash
+cd backend && python3 -m pip install -e ".[dev]"
+```
+
 ```bash
 cd backend && PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_*.py' -v
+```
+
+lint（ruff）と型チェック（mypy）は次のとおり。設定は `backend/pyproject.toml` にある。
+
+```bash
+cd backend && ruff check .
+```
+
+```bash
+cd backend && mypy
 ```
 
 ## run api
