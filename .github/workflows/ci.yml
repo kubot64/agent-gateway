@@ -26,11 +26,11 @@ jobs:
 
       - name: Check layer contracts
         working-directory: backend
-        run: PYTHONPATH=src lint-imports
+        run: bash scripts/check.sh contracts
 
       - name: Run unit tests
         working-directory: backend
-        run: PYTHONPATH=src python -m unittest discover -s tests -p 'test_*.py' -v
+        run: bash scripts/check.sh test
 
   lint:
     runs-on: ubuntu-latest
@@ -51,7 +51,7 @@ jobs:
 
       - name: Run ruff
         working-directory: backend
-        run: ruff check .
+        run: bash scripts/check.sh lint
 
   typecheck:
     runs-on: ubuntu-latest
@@ -72,7 +72,7 @@ jobs:
 
       - name: Run mypy
         working-directory: backend
-        run: mypy
+        run: bash scripts/check.sh typecheck
 
   e2e-postgres-redis:
     runs-on: ubuntu-latest

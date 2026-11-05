@@ -52,7 +52,8 @@ def build_infra(*, default_sqlite_path: str) -> AppInfra:
         )
         db_idempotency_store = PostgresIdempotencyStore(database)
     else:
-        database = SQLiteDatabase(db_path=default_sqlite_path)
+        sqlite_path = os.getenv("SQLITE_PATH", "").strip() or default_sqlite_path
+        database = SQLiteDatabase(db_path=sqlite_path)
         service = AgentService(
             reminder_store=SQLiteReminderStore(database),
             audit_store=SQLiteAuditLogStore(database),
