@@ -130,7 +130,7 @@ class InMemoryMetricStore:
         total = len(self._records)
         error_statuses = {"integration_error", "validation_error", "failed", "unauthorized"}
         errors = len([r for r in self._records if str(r.get("status")) in error_statuses])
-        durations = [int(r["duration_ms"]) for r in self._records if isinstance(r.get("duration_ms"), int)]
+        durations = [d for r in self._records if isinstance(d := r.get("duration_ms"), int)]
         avg_duration = int(sum(durations) / len(durations)) if durations else 0
         p95 = 0
         if durations:
