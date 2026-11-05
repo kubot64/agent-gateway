@@ -1,6 +1,6 @@
 # Cloud Run + Slack/Discord Setup
 
-この手順で、`/Users/morikubo-takashi/Codex/home` のAPIを Cloud Run にデプロイし、Slack/Discord から呼び出せるようにする。
+この手順で、このリポジトリの API を Cloud Run にデプロイし、Slack/Discord から呼び出せるようにする。
 
 ## 1. 前提
 - `gcloud` が利用可能
@@ -35,7 +35,7 @@ echo -n '...' | gcloud secrets versions add discord-public-key --data-file=-
 ## 3. Cloud Run deploy
 
 ```bash
-cd /Users/morikubo-takashi/Codex/home
+cd agent-gateway  # リポジトリのルート
 
 GCP_PROJECT=YOUR_PROJECT_ID \
 GCP_REGION=asia-northeast1 \
@@ -59,7 +59,7 @@ infra/cloudrun/deploy.sh
 Cloud Run URLでmanifestをレンダリング:
 
 ```bash
-cd /Users/morikubo-takashi/Codex/home/infra/slack
+cd infra/slack
 CLOUD_RUN_URL=https://YOUR_SERVICE_URL ./render_manifest.sh > app-manifest.rendered.yaml
 ```
 
@@ -77,7 +77,7 @@ Discord Developer Portal で
 ### 5.2 Slash Commands登録
 
 ```bash
-cd /Users/morikubo-takashi/Codex/home/infra/discord
+cd infra/discord
 DISCORD_APP_ID=YOUR_APP_ID \
 DISCORD_BOT_TOKEN=YOUR_BOT_TOKEN \
 ./register_commands.sh
