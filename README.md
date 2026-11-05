@@ -95,6 +95,6 @@ curl -sS -X POST http://127.0.0.1:8000/api/agent/handle-message \
 cd infra && docker compose --profile app up -d --build
 ```
 
-docker compose でも直接入口は既定で無効で、署名鍵も入っていない。使うときは `ENABLE_DIRECT_HANDLE_MESSAGE=1 SLACK_SIGNING_SECRET=... docker compose --profile app up -d --build` のように実行環境から渡す。E2E（`backend/scripts/e2e_pg_redis.sh`）は E2E 用の値を自分で立て、終了時にテスト用アプリを止める。
+docker compose でも直接入口は既定で無効で、署名鍵も入っていない。使うときは `ENABLE_DIRECT_HANDLE_MESSAGE=1 SLACK_SIGNING_SECRET=... docker compose --profile app up -d --build` のように実行環境から渡す。E2E（`backend/scripts/e2e_pg_redis.sh`）は、E2E 専用の `infra/docker-compose.e2e.yml` を別のプロジェクト名（`agent-gateway-e2e`）で動かす。公開ポートは app 18000、postgres 15432、redis 16379 で、データも分かれているので、手元で動かしている構成には触れない。直接入口を開けたテスト用アプリは終了時に必ず消す。`E2E_CLEANUP=1` なら、E2E 用の postgres と redis もデータごと消す。
 
 本格的な README（解決する問題、構成図、4 つの安全、ADR）は 2026-11 中に書き換えます。

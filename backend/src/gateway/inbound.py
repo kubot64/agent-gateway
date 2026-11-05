@@ -9,7 +9,9 @@ from gateway.discord_payloads import is_discord_ping, normalize_discord_interact
 from gateway.discord_security import DiscordSignatureVerificationError, verify_discord_signature
 from gateway.security import SignatureVerificationError, verify_slack_signature
 from gateway.slack_payloads import (
+    extract_challenge,
     extract_confirmation_from_interaction,
+    is_url_verification,
     normalize_slash_command,
     parse_interaction_payload,
 )
@@ -39,6 +41,9 @@ def handle_slack_event(
     )
     if rejected:
         return rejected
+    # Slack は URL verification にも署名を付けるので、ほかのイベントと同じく検証の後ろで応答する。
+    if is_url_verification(payload):
+        return {"status": "url_verification", "challenge": extract_challenge(payload)}
     return _process_slack_event(payload, request_id=request_id)
 
 

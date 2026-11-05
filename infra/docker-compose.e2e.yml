@@ -1,0 +1,53 @@
+# E2E（backend/scripts/e2e_pg_redis.sh）専用の構成。
+# 手元で動かす docker-compose.yml とは、プロジェクト名・コンテナ名・公開ポート・データを分ける。
+# E2E を走らせても、既存のアプリや postgres / redis のデータには触れない。
+name: agent-gateway-e2e
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    environment:
+      DATABASE_BACKEND: postgres
+      POSTGRES_DSN: postgresql://home:home@postgres:5432/home
+      IDEMPOTENCY_BACKEND: redis
+      REDIS_URL: redis://redis:6379/0
+      DOC_SEARCH_BACKEND: hybrid
+      # E2E は依頼を直接送るので、直接入口を開ける。このコンテナは E2E の終了時に必ず消す。
+      ENABLE_DIRECT_HANDLE_MESSAGE: "1"
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:?SLACK_SIGNING_SECRET is required for E2E}
+    ports:
+      - "127.0.0.1:${E2E_APP_PORT:-18000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    profiles:
+      - app
+
+  # データは名前付きボリュームに残さない。down -v でコンテナと一緒に消える。
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: home
+      POSTGRES_USER: home
+      POSTGRES_PASSWORD: home
+    ports:
+      - "127.0.0.1:${E2E_POSTGRES_PORT:-15432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U home -d home"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:${E2E_REDIS_PORT:-16379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 15

@@ -13,7 +13,7 @@ services:
       IDEMPOTENCY_BACKEND: redis
       REDIS_URL: redis://redis:6379/0
       DOC_SEARCH_BACKEND: hybrid
-      # handle-message の直接入口。既定は無効で、ローカル開発と E2E でだけ 1 にする。
+      # handle-message の直接入口。既定は無効で、ローカル開発でだけ 1 にする（E2E は docker-compose.e2e.yml を使う）。
       ENABLE_DIRECT_HANDLE_MESSAGE: ${ENABLE_DIRECT_HANDLE_MESSAGE:-0}
       # Slack / Discord の入口は鍵がないと 401 を返す。使うときは実行環境から渡す。
       SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}

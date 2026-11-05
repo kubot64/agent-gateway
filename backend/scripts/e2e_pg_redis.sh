@@ -6,10 +6,15 @@ BACKEND_DIR="${ROOT_DIR}/backend"
 INFRA_DIR="${ROOT_DIR}/infra"
 PORT="${PORT:-18000}"
 E2E_MODE="${E2E_MODE:-auto}" # auto | host | docker
-E2E_CLEANUP="${E2E_CLEANUP:-0}" # 1 to also stop postgres + redis on exit (the test app is always stopped)
+E2E_CLEANUP="${E2E_CLEANUP:-0}" # 1 to also remove the E2E postgres + redis on exit (the test app is always removed)
 BASE_URL=""
 APP_PID=""
 DOCKER_APP_STARTED=0
+# 手元の docker-compose.yml とは別のプロジェクト・ポート・データで動かし、既存のサービスに触れない。
+E2E_PROJECT="${E2E_PROJECT:-agent-gateway-e2e}"
+export E2E_APP_PORT="${PORT}"
+export E2E_POSTGRES_PORT="${E2E_POSTGRES_PORT:-15432}"
+export E2E_REDIS_PORT="${E2E_REDIS_PORT:-16379}"
 # handle-message の直接入口は既定で無効。E2E では依頼を直接送るために有効にする。
 export ENABLE_DIRECT_HANDLE_MESSAGE=1
 # Slack の入口は署名鍵がないと 401 を返す。E2E 用の鍵で起動し、送るリクエストに署名する。
@@ -26,19 +31,24 @@ require_cmd docker
 require_cmd curl
 require_cmd python3
 
-echo "[1/6] starting postgres + redis via docker compose"
-docker compose -f "${INFRA_DIR}/docker-compose.yml" up -d
+compose() {
+  docker compose -p "${E2E_PROJECT}" -f "${INFRA_DIR}/docker-compose.e2e.yml" "$@"
+}
+
+echo "[1/6] starting postgres + redis via docker compose (project: ${E2E_PROJECT})"
+compose up -d --wait
 
 cleanup() {
   if [[ -n "${APP_PID}" ]]; then
     kill "${APP_PID}" >/dev/null 2>&1 || true
   fi
   # テスト用アプリは直接入口を開けて起動しているので、E2E_CLEANUP に関係なく必ず止める。
+  # 対象は E2E 専用プロジェクトの app だけなので、手元で動いているアプリは止まらない。
   if [[ "${DOCKER_APP_STARTED}" == "1" ]]; then
-    docker compose -f "${INFRA_DIR}/docker-compose.yml" --profile app rm --stop --force app >/dev/null 2>&1 || true
+    compose --profile app rm --stop --force app >/dev/null 2>&1 || true
   fi
   if [[ "${E2E_CLEANUP}" == "1" ]]; then
-    docker compose -f "${INFRA_DIR}/docker-compose.yml" --profile app down >/dev/null 2>&1 || true
+    compose --profile app down -v >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
@@ -79,9 +89,9 @@ start_host_api() {
   fi
   echo "[3/6] starting host API with postgres+redis backend"
   export DATABASE_BACKEND=postgres
-  export POSTGRES_DSN="${POSTGRES_DSN:-postgresql://home:home@localhost:5432/home}"
+  export POSTGRES_DSN="${POSTGRES_DSN:-postgresql://home:home@localhost:${E2E_POSTGRES_PORT}/home}"
   export IDEMPOTENCY_BACKEND=redis
-  export REDIS_URL="${REDIS_URL:-redis://localhost:6379/0}"
+  export REDIS_URL="${REDIS_URL:-redis://localhost:${E2E_REDIS_PORT}/0}"
   cd "${BACKEND_DIR}"
   PYTHONPATH=src python3 -m uvicorn gateway.main:app --host 127.0.0.1 --port "${PORT}" >/tmp/home-e2e-api.log 2>&1 &
   APP_PID=$!
@@ -90,9 +100,10 @@ start_host_api() {
 
 start_docker_api() {
   echo "[2/6] docker mode selected, starting compose app profile"
+  compose --profile app build app
+  compose --profile app up -d app
   DOCKER_APP_STARTED=1
-  docker compose -f "${INFRA_DIR}/docker-compose.yml" --profile app up -d --build
-  BASE_URL="http://127.0.0.1:8000"
+  BASE_URL="http://127.0.0.1:${E2E_APP_PORT}"
 }
 
 if [[ "${E2E_MODE}" == "host" ]]; then

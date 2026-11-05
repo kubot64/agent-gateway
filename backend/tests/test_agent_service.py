@@ -580,6 +580,27 @@ class UnauthenticatedEntryTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body["status"], "completed")
 
+    URL_VERIFICATION = {"type": "url_verification", "token": "t", "challenge": "challenge-123"}
+
+    def test_url_verification_is_rejected_when_signing_secret_is_not_configured(self) -> None:
+        with _temporary_env({"SLACK_SIGNING_SECRET": None}):
+            status, body = _post_json("/api/inbound/slack/events", self.URL_VERIFICATION)
+        self.assertEqual(status, 401)
+        self.assertNotIn("challenge", body)
+
+    def test_unsigned_url_verification_is_rejected(self) -> None:
+        with _temporary_env({"SLACK_SIGNING_SECRET": SLACK_TEST_SECRET}):
+            status, body = _post_json("/api/inbound/slack/events", self.URL_VERIFICATION)
+        self.assertEqual(status, 401)
+        self.assertNotIn("challenge", body)
+
+    def test_signed_url_verification_returns_challenge(self) -> None:
+        raw_body = json.dumps(self.URL_VERIFICATION).encode("utf-8")
+        with _temporary_env({"SLACK_SIGNING_SECRET": SLACK_TEST_SECRET}):
+            status, body = _post("/api/inbound/slack/events", raw_body, "application/json", _slack_signed_headers(SLACK_TEST_SECRET, raw_body))
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {"challenge": "challenge-123"})
+
     def test_slack_command_is_rejected_when_signing_secret_is_not_configured(self) -> None:
         raw_body = urlencode({"team_id": "T1", "channel_id": "C1", "user_id": "U1", "command": "/ask", "text": "hello"}).encode("utf-8")
         with _temporary_env({"SLACK_SIGNING_SECRET": None}):

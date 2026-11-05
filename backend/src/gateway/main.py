@@ -10,7 +10,6 @@ from fastapi.responses import JSONResponse
 from gateway.slack_web_api import SlackAPIError, SlackWebAPIClient
 from gateway import inbound
 from gateway.observability import configure_logging, log_http_request
-from gateway.slack_payloads import extract_challenge, is_url_verification
 
 app = FastAPI(title="home-secretary-backend", version="0.1.0")
 configure_logging()
@@ -114,9 +113,6 @@ async def inbound_slack_events(request: Request) -> JSONResponse:
     raw_body = await request.body()
     payload = await request.json()
 
-    if is_url_verification(payload):
-        return JSONResponse({"challenge": extract_challenge(payload)})
-
     result = inbound.handle_slack_event(
         payload,
         headers=request.headers,
@@ -126,6 +122,8 @@ async def inbound_slack_events(request: Request) -> JSONResponse:
     )
     if result.get("status") == "unauthorized":
         return JSONResponse(result, status_code=401, headers={"x-request-id": request_id})
+    if result.get("status") == "url_verification":
+        return JSONResponse({"challenge": result.get("challenge", "")}, headers={"x-request-id": request_id})
 
     if result.get("status") != "duplicate":
         _try_post_reply(payload, str(result.get("text", "")))
