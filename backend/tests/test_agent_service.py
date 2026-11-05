@@ -9,18 +9,18 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 from uuid import uuid4
 
-from adapters.slack.web_api import SlackAPIError, SlackWebAPIClient
-from agent.llm import LocalFallbackLLMClient
-from agent.models import InboundEvent
-from agent.service import AgentService, InMemoryMetricStore
-from agent.search import LocalMarkdownSearchClient, LocalVectorSearchClient, SearchResult, build_default_search_client
-from agent.task import TaskClientError
-from api.discord_payloads import normalize_discord_interaction
-from api.discord_security import DiscordSignatureVerificationError, verify_discord_signature
-from api.inbound import handle_agent_message, handle_discord_interaction, handle_slack_command, handle_slack_event, handle_slack_interaction
-from api.security import verify_slack_signature
-from api.slack_payloads import extract_confirmation_from_interaction, normalize_slash_command, parse_interaction_payload
-from api.slack_responses import build_slack_response
+from gateway.slack_web_api import SlackAPIError, SlackWebAPIClient
+from app.llm import LocalFallbackLLMClient
+from app.models import InboundEvent
+from app.service import AgentService, InMemoryMetricStore
+from tools.docs_search import LocalMarkdownSearchClient, LocalVectorSearchClient, SearchResult, build_default_search_client
+from tools.linear import TaskClientError
+from gateway.discord_payloads import normalize_discord_interaction
+from gateway.discord_security import DiscordSignatureVerificationError, verify_discord_signature
+from gateway.inbound import handle_agent_message, handle_discord_interaction, handle_slack_command, handle_slack_event, handle_slack_interaction
+from gateway.security import verify_slack_signature
+from gateway.slack_payloads import extract_confirmation_from_interaction, normalize_slash_command, parse_interaction_payload
+from gateway.slack_responses import build_slack_response
 from infra.stores import SQLiteAuditLogStore, SQLiteCommandMetricStore, SQLiteDatabase, SQLiteIdempotencyStore, SQLiteReminderStore
 from infra.factory import build_infra
 
@@ -548,7 +548,7 @@ class SlackWebAPITests(unittest.TestCase):
             def read(self) -> bytes:
                 return b'{"ok": true, "channel": "C1", "ts": "1.23"}'
 
-        with patch("adapters.slack.web_api.request.urlopen", return_value=FakeResponse()) as mocked:
+        with patch("gateway.slack_web_api.request.urlopen", return_value=FakeResponse()) as mocked:
             client = SlackWebAPIClient(bot_token="xoxb-test")
             result = client.post_message(channel="C1", text="hello", thread_ts="1.11")
             self.assertEqual(result["ok"], True)
@@ -566,7 +566,7 @@ class SlackWebAPITests(unittest.TestCase):
             def read(self) -> bytes:
                 return b'{"ok": false, "error": "channel_not_found"}'
 
-        with patch("adapters.slack.web_api.request.urlopen", return_value=FakeResponse()):
+        with patch("gateway.slack_web_api.request.urlopen", return_value=FakeResponse()):
             client = SlackWebAPIClient(bot_token="xoxb-test")
             with self.assertRaises(SlackAPIError):
                 client.post_message(channel="C1", text="hello")
@@ -631,7 +631,7 @@ class DiscordInboundTests(unittest.TestCase):
         self.assertEqual(response["status"], "completed")
 
     def test_handle_discord_interaction_rejects_invalid_signature(self) -> None:
-        with patch("api.inbound.verify_discord_signature", side_effect=DiscordSignatureVerificationError("bad")):
+        with patch("gateway.inbound.verify_discord_signature", side_effect=DiscordSignatureVerificationError("bad")):
             response = handle_discord_interaction(
                 {
                     "type": 1,

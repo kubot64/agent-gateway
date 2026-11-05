@@ -4,16 +4,16 @@ import json
 from typing import Any, Mapping
 from datetime import datetime, timezone
 
-from agent.models import InboundEvent
-from api.discord_payloads import is_discord_ping, normalize_discord_interaction
-from api.discord_security import DiscordSignatureVerificationError, verify_discord_signature
-from api.security import SignatureVerificationError, verify_slack_signature
-from api.slack_payloads import (
+from app.models import InboundEvent
+from gateway.discord_payloads import is_discord_ping, normalize_discord_interaction
+from gateway.discord_security import DiscordSignatureVerificationError, verify_discord_signature
+from gateway.security import SignatureVerificationError, verify_slack_signature
+from gateway.slack_payloads import (
     extract_confirmation_from_interaction,
     normalize_slash_command,
     parse_interaction_payload,
 )
-from api.slack_responses import build_slack_response
+from gateway.slack_responses import build_slack_response
 from infra.factory import build_infra, default_sqlite_path_from_file
 
 

@@ -4,7 +4,7 @@
 `/ask` の文脈取得をキーワード検索依存から段階的に改善するため、ローカル環境で動く最小ベクトル検索を導入する。
 
 ## Current PoC
-- 実装: `backend/src/agent/search.py`
+- 実装: `backend/src/tools/docs_search.py`
 - 切替: `DOC_SEARCH_BACKEND=keyword|vector|hybrid`
 - 対象: Markdown (`README.md`, `docs`, `games`, `travel` など)
 
