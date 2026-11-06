@@ -1,6 +1,6 @@
 """HTTP の入口すべてについて、認証の不変条件を確かめる。
 
-`gateway.main.app` の入口を、Mount の先も含めて (メソッド, パス) 単位で回し、どの入口も下の分類表のどれかに入っていることを確かめる。
+`gateway.main.app` の入口を、Mount と Host の先も含めて (メソッド, パス) 単位で回し、どの入口も下の分類表のどれかに入っていることを確かめる。
 署名が必須の入口は、鍵が未設定なら署名の有無にかかわらず 401 を返し、鍵があっても署名がなければ 401 を返す。
 入口を足したら分類表に足さない限りテストが落ちるので、新しい入口も自動で検査の対象になる。
 """
@@ -144,6 +144,9 @@ def _route_entries(routes: Sequence[BaseRoute] | None = None, prefix: str = "") 
                 methods.discard("HEAD")
             entries.update((method, path) for method in methods)
             continue
+        if isinstance(route, Host):
+            # Host の先は、同じパスでも別の入口になる。ホスト名を `//ホスト名/パス` の形でパスの前に付けて区別する。
+            path = f"//{route.host}{prefix}"
         sub_routes = getattr(route, "routes", None) if isinstance(route, (Mount, Host)) else None
         if sub_routes:
             entries |= _route_entries(sub_routes, path)
