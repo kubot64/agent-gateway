@@ -2,6 +2,10 @@
 
 main への直接 push は禁止で、変更はすべて PR を通す。
 
+## PR を作る前
+
+`/code-review` を `main` に対して回し、指摘を直してから PR を作る。Standards 軸はルートの `CODING_STANDARDS.md` を読む。issue から始まっていない変更では、spec の場所を聞かれたら「ない」と答え、Spec 軸を飛ばす。
+
 ## 本文
 
 見出しは `.github/pull_request_template.md` のとおり、「背景・変更・検証方法・Merge Danger」にする。`/pr` スキルの要素は次のように各見出しへ収める。
