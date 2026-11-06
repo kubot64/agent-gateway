@@ -35,10 +35,10 @@ LLM エージェントに安全に渡すための基盤です。2026-11 に `hom
 Python 3.11 以上が要る。依存は `backend/pyproject.toml` にまとめてあり、CI も同じ定義から入れる。
 
 ```bash
-cd backend && python3 -m pip install -e ".[dev]"
+(cd backend && python3 -m pip install -e ".[dev]")
 ```
 
-CI の unit-tests・lint・typecheck ジョブと同じ検査は、`backend/scripts/check.sh` 1 本で流せる。CI もこのスクリプトを呼ぶ。契約（lint-imports）、テスト（unittest）、lint（ruff）、型チェック（mypy）の順に実行する。
+以下のコマンドはリポジトリのルートで実行する。CI の unit-tests・lint・typecheck ジョブと同じ検査は、`backend/scripts/check.sh` 1 本で流せる。CI もこのスクリプトを呼ぶ。契約（lint-imports）、テスト（unittest）、lint（ruff）、型チェック（mypy）の順に実行する。
 
 ```bash
 bash backend/scripts/check.sh
