@@ -28,31 +28,29 @@ LLM エージェントに安全に渡すための基盤です。2026-11 に `hom
 - **layers**: gateway → app → policy → tools の順で、上向きの import を禁じる。
 - **forbidden**: gateway と app から tools への直接 import を禁じる。ツールを登録簿から取り出して実行できるのは policy だけにするためだ（ADR-0003）。例外は `app.service -> tools.linear` だけで、`linear.create_issue` をツールにする #12 で外す。
 
-```bash
-cd backend && PYTHONPATH=src lint-imports
-```
+契約の検査は `bash backend/scripts/check.sh contracts` で流せる（下の「test」を参照）。
 
 ## test
 
 Python 3.11 以上が要る。依存は `backend/pyproject.toml` にまとめてあり、CI も同じ定義から入れる。
 
 ```bash
-cd backend && python3 -m pip install -e ".[dev]"
+(cd backend && python3 -m pip install -e ".[dev]")
 ```
+
+以下のコマンドはリポジトリのルートで実行する。CI の unit-tests・lint・typecheck ジョブと同じ検査は、`backend/scripts/check.sh` 1 本で流せる。CI もこのスクリプトを呼ぶ。契約（lint-imports）、テスト（unittest）、lint（ruff）、型チェック（mypy）の順に実行する。
 
 ```bash
-cd backend && PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_*.py' -v
+bash backend/scripts/check.sh
 ```
 
-lint（ruff）と型チェック（mypy）は次のとおり。設定は `backend/pyproject.toml` にある。
-
-```bash
-cd backend && ruff check .
-```
+1 つだけ流すときは `contracts`・`test`・`lint`・`typecheck` のどれかを渡す。`test` のあとにはテストを絞る引数を続けられる。
 
 ```bash
-cd backend && mypy
+bash backend/scripts/check.sh test tests.test_read_tools
 ```
+
+テストは SQLite を一時ディレクトリに作るので、手元の `backend/data/agent.db` には書き込まない。`tests/__init__.py` が `SQLITE_PATH` を設定するためで、`tests` をパッケージとして読む実行方法（`check.sh` の書き方）のときだけ効く。アプリを動かすときも、`SQLITE_PATH` を渡せば SQLite の置き場所を変えられる。
 
 ## run api
 

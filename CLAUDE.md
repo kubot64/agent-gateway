@@ -4,6 +4,10 @@
 
 文書・issue・PR 本文は日本語で書く。コマンド、識別子、ラベル名は英語のまま。PR を作るときとマージするときは `docs/agents/pull-requests.md` を読む。
 
+## 検査
+
+コミットと PR の前に `bash backend/scripts/check.sh` を流す。CI の unit-tests・lint・typecheck と同じ検査になる。
+
 ## Agent skills
 
 ### Issue tracker

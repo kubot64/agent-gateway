@@ -737,10 +737,21 @@ class InfraFactoryTests(unittest.TestCase):
     def test_build_infra_defaults_to_sqlite(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             db_path = f"{tmp_dir}/agent.db"
-            with _temporary_env({"DATABASE_BACKEND": None, "IDEMPOTENCY_BACKEND": None}):
+            with _temporary_env({"DATABASE_BACKEND": None, "IDEMPOTENCY_BACKEND": None, "SQLITE_PATH": None}):
                 infra = build_infra(default_sqlite_path=db_path)
             self.assertIsInstance(infra.database, SQLiteDatabase)
             self.assertTrue(infra.database.health_check())
+            self.assertTrue(os.path.exists(db_path))
+
+    def test_build_infra_uses_sqlite_path_from_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            default_path = f"{tmp_dir}/default.db"
+            env_path = f"{tmp_dir}/from-env.db"
+            with _temporary_env({"DATABASE_BACKEND": None, "IDEMPOTENCY_BACKEND": None, "SQLITE_PATH": env_path}):
+                infra = build_infra(default_sqlite_path=default_path)
+            self.assertTrue(infra.database.health_check())
+            self.assertTrue(os.path.exists(env_path))
+            self.assertFalse(os.path.exists(default_path))
 
     def test_build_infra_redis_requires_url(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
