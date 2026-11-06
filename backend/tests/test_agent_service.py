@@ -472,8 +472,10 @@ def _interaction_form(confirmation_id: str, action_id: str = "confirm") -> tuple
     return form, urlencode(form).encode("utf-8")
 
 
-def _post(path: str, body: bytes, content_type: str, headers: dict[str, str] | None = None) -> tuple[int, dict]:
-    """Send one POST to the FastAPI app over ASGI and return (status, JSON body)."""
+def _post(
+    path: str, body: bytes, content_type: str, headers: dict[str, str] | None = None, *, method: str = "POST"
+) -> tuple[int, dict]:
+    """Send one request (POST by default) to the FastAPI app over ASGI and return (status, JSON body)."""
     from gateway.main import app
 
     raw_headers = [(b"content-type", content_type.encode("ascii")), (b"content-length", str(len(body)).encode("ascii"))]
@@ -483,7 +485,7 @@ def _post(path: str, body: bytes, content_type: str, headers: dict[str, str] | N
         "type": "http",
         "asgi": {"version": "3.0"},
         "http_version": "1.1",
-        "method": "POST",
+        "method": method,
         "scheme": "http",
         "path": path,
         "raw_path": path.encode("ascii"),
