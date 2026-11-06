@@ -1,6 +1,6 @@
 """HTTP の入口すべてについて、認証の不変条件を確かめる。
 
-`gateway.main.app` の入口を (メソッド, パス) 単位で回し、どの入口も下の分類表のどれかに入っていることを確かめる。
+`gateway.main.app` の入口を、Mount の先も含めて (メソッド, パス) 単位で回し、どの入口も下の分類表のどれかに入っていることを確かめる。
 署名が必須の入口は、鍵が未設定なら署名の有無にかかわらず 401 を返し、鍵があっても署名がなければ 401 を返す。
 入口を足したら分類表に足さない限りテストが落ちるので、新しい入口も自動で検査の対象になる。
 """
@@ -10,9 +10,11 @@ from __future__ import annotations
 import json
 import unittest
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Sequence
 from urllib.parse import urlencode
 from uuid import uuid4
+
+from starlette.routing import BaseRoute, Host, Mount
 
 from gateway.main import app
 from tests.test_agent_service import (
@@ -126,14 +128,27 @@ PUBLIC_ENTRIES: dict[Entry, str] = {
 }
 
 
-def _route_entries() -> set[Entry]:
+# 中のルートを数えられない入口（素の ASGI アプリや静的ファイルの Mount、WebSocket など）は、このメソッド名で数える。
+# 分類表に明示しない限りテストが落ちるので、検査をすり抜けない。
+ANY_METHOD = "ANY"
+
+
+def _route_entries(routes: Sequence[BaseRoute] | None = None, prefix: str = "") -> set[Entry]:
     entries: set[Entry] = set()
-    for route in app.routes:
+    for route in app.routes if routes is None else routes:
+        path = prefix + getattr(route, "path", "")
         methods = set(getattr(route, "methods", None) or ())
-        # Starlette は GET の入口に HEAD を自動で足す。HEAD は同じ処理で本文を返さないだけなので、GET の分類に含める。
-        if "GET" in methods:
-            methods.discard("HEAD")
-        entries.update((method, route.path) for method in methods)
+        if methods:
+            # Starlette は GET の入口に HEAD を自動で足す。HEAD は同じ処理で本文を返さないだけなので、GET の分類に含める。
+            if "GET" in methods:
+                methods.discard("HEAD")
+            entries.update((method, path) for method in methods)
+            continue
+        sub_routes = getattr(route, "routes", None) if isinstance(route, (Mount, Host)) else None
+        if sub_routes:
+            entries |= _route_entries(sub_routes, path)
+        else:
+            entries.add((ANY_METHOD, path or "/"))
     return entries
 
 
