@@ -14,7 +14,12 @@ from typing import Callable, Sequence
 from urllib.parse import urlencode
 from uuid import uuid4
 
-from starlette.routing import BaseRoute, Host, Mount
+from fastapi import FastAPI
+from starlette.requests import Request
+from starlette.responses import PlainTextResponse
+from starlette.routing import BaseRoute, Host, Mount, Route, Router, WebSocketRoute
+from starlette.types import Receive, Scope, Send
+from starlette.websockets import WebSocket
 
 from gateway.main import app
 from tests.test_agent_service import (
@@ -186,6 +191,64 @@ class InboundAuthInvariantTests(unittest.TestCase):
                 with _temporary_env({env: None}):
                     status, _ = _post(path, payload, "application/json", method=method)
                 self.assertEqual(status, 404)
+
+
+def _endpoint(request: Request) -> PlainTextResponse:
+    return PlainTextResponse("x")
+
+
+async def _websocket_endpoint(websocket: WebSocket) -> None:
+    await websocket.close()
+
+
+async def _raw_asgi_app(scope: Scope, receive: Receive, send: Send) -> None:
+    await PlainTextResponse("x")(scope, receive, send)
+
+
+def _get(path: str) -> Route:
+    return Route(path, _endpoint, methods=["GET"])
+
+
+class RouteEntriesTests(unittest.TestCase):
+    """`_route_entries()` が入口を漏らさず数えることを、合成したルート表で確かめる。
+
+    分類テストは、この列挙が入口を拾えている限りでしか効かない。列挙から漏れる形の入口を足したら、ここにも足す。
+    """
+
+    def test_counts_each_method_separately(self) -> None:
+        routes = [Route("/a", _endpoint, methods=["GET", "POST"])]
+
+        self.assertEqual(_route_entries(routes), {("GET", "/a"), ("POST", "/a")})
+
+    def test_counts_head_as_part_of_get(self) -> None:
+        self.assertEqual(_route_entries([_get("/a")]), {("GET", "/a")})
+
+    def test_counts_routes_inside_a_mounted_sub_app_with_prefix(self) -> None:
+        sub_app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+        sub_app.add_api_route("/x", _endpoint, methods=["GET"])
+
+        self.assertEqual(_route_entries([Mount("/api/new", app=sub_app)]), {("GET", "/api/new/x")})
+
+    def test_counts_nested_mounts_with_joined_prefix(self) -> None:
+        routes = [Mount("/api", routes=[Mount("/v1", routes=[_get("/x")])])]
+
+        self.assertEqual(_route_entries(routes), {("GET", "/api/v1/x")})
+
+    def test_counts_mount_without_inner_routes_as_any(self) -> None:
+        self.assertEqual(_route_entries([Mount("/api/raw", app=_raw_asgi_app)]), {(ANY_METHOD, "/api/raw")})
+
+    def test_counts_websocket_route_as_any(self) -> None:
+        self.assertEqual(_route_entries([WebSocketRoute("/api/ws", _websocket_endpoint)]), {(ANY_METHOD, "/api/ws")})
+
+    def test_distinguishes_routes_behind_host_by_host_name(self) -> None:
+        routes = [_get("/api/health"), Host("other.example", app=Router(routes=[_get("/api/health")]))]
+
+        self.assertEqual(_route_entries(routes), {("GET", "/api/health"), ("GET", "//other.example/api/health")})
+
+    def test_counts_mount_inside_host_with_host_and_prefix(self) -> None:
+        routes = [Host("other.example", app=Router(routes=[Mount("/api", routes=[_get("/health")])]))]
+
+        self.assertEqual(_route_entries(routes), {("GET", "//other.example/api/health")})
 
 
 if __name__ == "__main__":
