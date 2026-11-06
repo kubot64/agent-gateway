@@ -1,7 +1,7 @@
 """HTTP の入口すべてについて、認証の不変条件を確かめる。
 
 `gateway.main.app` の入口を、Mount と Host の先も含めて (メソッド, パス) 単位で回し、どの入口も下の分類表のどれかに入っていることを確かめる。
-署名が必須の入口は、鍵が未設定なら署名の有無にかかわらず 401 を返し、鍵があっても署名がなければ 401 を返す。
+署名が必須の入口は、鍵が未設定なら署名の有無にかかわらず 401 を返す。鍵があっても、署名がないか、本文や署名が改ざんされていれば 401 を返す。
 入口を足したら分類表に足さない限りテストが落ちるので、新しい入口も自動で検査の対象になる。
 """
 
@@ -41,6 +41,7 @@ class SignedEntry:
     key_env: str
     key_value: str
     sign: Callable[[bytes], dict[str, str]]
+    signature_header: str
     content_type: str
     body: bytes
 
@@ -69,6 +70,7 @@ SIGNED_ENTRIES = [
         key_env="SLACK_SIGNING_SECRET",
         key_value=SLACK_TEST_SECRET,
         sign=_slack_sign,
+        signature_header="X-Slack-Signature",
         content_type="application/json",
         body=_json(
             {
@@ -85,6 +87,7 @@ SIGNED_ENTRIES = [
         key_env="SLACK_SIGNING_SECRET",
         key_value=SLACK_TEST_SECRET,
         sign=_slack_sign,
+        signature_header="X-Slack-Signature",
         content_type="application/x-www-form-urlencoded",
         body=_form({"team_id": "T1", "channel_id": "C1", "user_id": "U1", "command": "/ask", "text": "hello"}),
     ),
@@ -94,6 +97,7 @@ SIGNED_ENTRIES = [
         key_env="SLACK_SIGNING_SECRET",
         key_value=SLACK_TEST_SECRET,
         sign=_slack_sign,
+        signature_header="X-Slack-Signature",
         content_type="application/x-www-form-urlencoded",
         body=_form({"payload": json.dumps({"actions": [{"action_id": "confirm", "value": "unknown"}]})}),
     ),
@@ -103,6 +107,7 @@ SIGNED_ENTRIES = [
         key_env="DISCORD_PUBLIC_KEY",
         key_value=DISCORD_TEST_PUBLIC_KEY,
         sign=_discord_signed_headers,
+        signature_header="X-Signature-Ed25519",
         content_type="application/json",
         body=_json(
             {
@@ -184,6 +189,26 @@ class InboundAuthInvariantTests(unittest.TestCase):
                 self.assertEqual(status, 401)
                 self.assertEqual(body.get("status"), "unauthorized")
 
+    def test_signed_entries_reject_tampered_requests(self) -> None:
+        for entry in SIGNED_ENTRIES:
+            headers = entry.sign(entry.body)
+            tampered_signature = {**headers, entry.signature_header: _flip_last_char(headers[entry.signature_header])}
+            cases = (
+                # 改ざんしていない署名つきのリクエストは通る。下の 401 が改ざんのせいだと言えるための対照。
+                ("valid", entry.body, headers, False),
+                ("tampered body", entry.body + b" ", headers, True),
+                ("tampered signature", entry.body, tampered_signature, True),
+            )
+            for label, body, request_headers, rejected in cases:
+                with self.subTest(entry=entry.entry, request=label):
+                    with _temporary_env({entry.key_env: entry.key_value, "SLACK_BOT_TOKEN": None}):
+                        status, response = _post(entry.path, body, entry.content_type, request_headers, method=entry.method)
+                    if rejected:
+                        self.assertEqual(status, 401)
+                        self.assertEqual(response.get("status"), "unauthorized")
+                    else:
+                        self.assertNotEqual(status, 401)
+
     def test_direct_entries_are_closed_without_env(self) -> None:
         payload = _json({"platform": "api", "workspace_id": "W1", "channel_id": "C1", "user_id": "U1", "text": "/ask hi", "message_id": f"m-{uuid4()}"})
         for (method, path), env in DIRECT_ENTRIES.items():
@@ -191,6 +216,10 @@ class InboundAuthInvariantTests(unittest.TestCase):
                 with _temporary_env({env: None}):
                     status, _ = _post(path, payload, "application/json", method=method)
                 self.assertEqual(status, 404)
+
+
+def _flip_last_char(signature: str) -> str:
+    return signature[:-1] + ("0" if signature[-1] != "0" else "1")
 
 
 def _endpoint(request: Request) -> PlainTextResponse:
